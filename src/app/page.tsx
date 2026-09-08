@@ -8,6 +8,7 @@ import { ChatBox, FileAttachment } from "@/components/chat/chat-box";
 import { CodeBlock } from "@/components/chat/code-block";
 import { FeatureView, FeatureTab } from "@/components/features/feature-view";
 import { AuthModal } from "@/components/auth/auth-modal";
+import { StudioModal } from "@/components/studio/studio-modal";
 import { Zap, User as UserIcon, Sparkles, Download, FileText, FileCode, Check } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { User } from "@supabase/supabase-js";
@@ -26,12 +27,13 @@ interface Message {
 export default function Home() {
   const [user, setUser] = useState<User | null>(null);
   const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [isStudioOpen, setIsStudioOpen] = useState(false);
 
   const [currentTab, setCurrentTab] = useState<FeatureTab>("chat");
   const [currentChatId, setCurrentChatId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [selectedModel, setSelectedModel] = useState<string>("gemini-3.1-flash-lite");
+  const [selectedModel, setSelectedModel] = useState<string>("gemini-2.5-flash");
   const [activeAgentId, setActiveAgentId] = useState<string | null>(null);
 
   const [showExportMenu, setShowExportMenu] = useState(false);
@@ -72,6 +74,14 @@ export default function Home() {
     await supabase.auth.signOut();
     setUser(null);
     handleNewChat();
+  };
+
+  const handleSelectTab = (tab: FeatureTab) => {
+    if (tab === "projects") {
+      setIsStudioOpen(true);
+      return;
+    }
+    setCurrentTab(tab);
   };
 
   const handleSelectChat = async (chatId: string) => {
@@ -312,11 +322,31 @@ export default function Home() {
         onSuccess={() => handleNewChat()}
       />
 
+      <StudioModal
+        isOpen={isStudioOpen}
+        onClose={() => setIsStudioOpen(false)}
+        onSendToChat={(dataUrl, promptText) => {
+          const base64 = dataUrl.split(",")[1];
+          const newAttachment: FileAttachment = {
+            name: `studio-edit-${Date.now()}.png`,
+            type: "image/png",
+            previewUrl: dataUrl,
+            base64: base64,
+          };
+          setCurrentTab("chat");
+          handleSendMessage(
+            promptText || "Analise a imagem editada no Studio.",
+            selectedModel,
+            [newAttachment]
+          );
+        }}
+      />
+
       <div className="relative z-10 flex flex-1 overflow-hidden">
         <Sidebar
           currentChatId={currentChatId}
           currentTab={currentTab}
-          onSelectTab={setCurrentTab}
+          onSelectTab={handleSelectTab}
           onSelectChat={handleSelectChat}
           onNewChat={handleNewChat}
         />
