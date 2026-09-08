@@ -1,88 +1,134 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
-import {
-  ArrowUp,
-  Paperclip,
+import React, { useState, useRef, useEffect } from "react";
+import { 
+  Paperclip, 
+  ArrowUp, 
+  X, 
+  Sparkles, 
+  FileText, 
+  Check, 
   ChevronDown,
-  Sparkles,
-  Zap,
-  Check,
-  X,
-  FileText,
+  Loader2 
 } from "lucide-react";
 
-export interface ModelOption {
-  id: string;
+export interface AttachmentData {
   name: string;
-  tag: string;
-  speed: "Ultra-rápido" | "Equilibrado" | "Avançado";
-}
-
-export const AVAILABLE_MODELS: ModelOption[] = [
-  {
-    id: "gemini-3.1-flash-lite",
-    name: "Flash Lite",
-    tag: "3.1 Lite",
-    speed: "Ultra-rápido",
-  },
-  {
-    id: "gemini-2.5-flash-lite",
-    name: "Flash 2.5 Lite",
-    tag: "2.5 Lite",
-    speed: "Ultra-rápido",
-  },
-  {
-    id: "gemini-3.5-flash",
-    name: "Flash 3.5",
-    tag: "3.5 Flash",
-    speed: "Equilibrado",
-  },
-  {
-    id: "gemini-3.6-flash",
-    name: "Flash 3.6",
-    tag: "3.6 Flash",
-    speed: "Avançado",
-  },
-];
-
-export interface FileAttachment {
-  name: string;
-  type: string;
-  base64: string;
-  previewUrl?: string;
+  mimeType: string;
+  data: string; // base64 sem prefixo
 }
 
 interface ChatBoxProps {
-  onSendMessage: (text: string, modelId: string, attachments: FileAttachment[]) => void;
+  onSendMessage: (content: string, attachment?: AttachmentData, model?: string) => Promise<void>;
   isLoading: boolean;
-  selectedModel: string;
-  onSelectModel: (modelId: string) => void;
+  disabled?: boolean;
 }
 
-export function ChatBox({
-  onSendMessage,
-  isLoading,
-  selectedModel,
-  onSelectModel,
-}: ChatBoxProps) {
+const AVAILABLE_MODELS = [
+  { id: "gemini-2.5-flash", name: "Flash", desc: "Rápido e balanceado" },
+  { id: "gemini-2.5-flash-lite", name: "Flash Lite", desc: "Ultra veloz" },
+  { id: "gemini-2.5-pro", name: "Pro", desc: "Raciocínio complexo" },
+];
+
+/**
+ * Utilitário embutido para redimensionar/comprimir imagens no browser,
+ * mantendo o payload abaixo do teto de 4.5 MB da Vercel Serverless.
+ */
+async function processFile(file: File, maxWidth = 1600, maxHeight = 1600, quality = 0.8): Promise<AttachmentData> {
+  return new Promise((resolve, reject) => {
+    // Arquivos não visuais (PDF, TXT, etc.) são lidos diretamente
+    if (!file.type.startsWith("image/")) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = reader.result as string;
+        const base64 = result.split(",")[1];
+        resolve({
+          name: file.name,
+          mimeType: file.type || "application/octet-stream",
+          data: base64,
+        });
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+      return;
+    }
+
+    // Processamento e compressão via Canvas para imagens
+    const img = new Image();
+    const reader = new FileReader();
+
+    reader.onload = (e) => {
+      img.src = e.target?.result as string;
+    };
+
+    img.onload = () => {
+      let { width, height } = img;
+
+      if (width > height) {
+        if (width > maxWidth) {
+          height = Math.round((height * maxWidth) / width);
+          width = maxWidth;
+        }
+      } else {
+        if (height > maxHeight) {
+          width = Math.round((width * maxHeight) / height);
+          height = maxHeight;
+        }
+      }
+
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        reject(new Error("Falha ao obter contexto Canvas 2D"));
+        return;
+      }
+
+      ctx.drawImage(img, 0, 0, width, height);
+
+      // Converte para JPEG otimizado
+      const dataUrl = canvas.toDataURL("image/jpeg", quality);
+      const base64 = dataUrl.split(",")[1];
+
+      resolve({
+        name: file.name,
+        mimeType: "image/jpeg",
+        data: base64,
+      });
+    };
+
+    img.onerror = reject;
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+export function ChatBox({ onSendMessage, isLoading, disabled = false }: ChatBoxProps) {
   const [input, setInput] = useState("");
-  const [attachments, setAttachments] = useState<FileAttachment[]>([]);
-  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [attachment, setAttachment] = useState<AttachmentData | null>(null);
+  const [isProcessingFile, setIsProcessingFile] = useState(false);
+  const [selectedModel, setSelectedModel] = useState(AVAILABLE_MODELS[0].id);
+  const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const currentModel =
-    AVAILABLE_MODELS.find((m) => m.id === selectedModel) || AVAILABLE_MODELS[0];
-
+  // Auto-resize do textarea conforme o texto cresce
   useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (
-        dropdownRef.current &&
-        !dropdownRef.current.contains(event.target as Node)
-      ) {
-        setDropdownOpen(false);
+    if (textareaRef.current) {
+      textareaRef.current.style.height = "auto";
+      textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 180)}px`;
+    }
+  }, [input]);
+
+  // Fechar dropdown de modelos ao clicar fora
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setIsModelDropdownOpen(false);
       }
     }
     document.addEventListener("mousedown", handleClickOutside);
@@ -90,76 +136,40 @@ export function ChatBox({
   }, []);
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
+    const file = e.target.files?.[0];
+    if (!file) return;
 
-    const newAttachments: FileAttachment[] = [];
-
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      const isImage = file.type.startsWith("image/");
-      const isPdf = file.type === "application/pdf";
-      const isText =
-        file.type.startsWith("text/") ||
-        file.name.endsWith(".md") ||
-        file.name.endsWith(".csv") ||
-        file.name.endsWith(".txt");
-
-      if (!isImage && !isPdf && !isText) {
-        alert(`O formato do arquivo "${file.name}" não é suportado. Use imagens, PDF ou arquivos de texto.`);
-        continue;
-      }
-
-      const reader = new FileReader();
-      const base64Promise = new Promise<string>((resolve) => {
-        reader.onload = () => {
-          const result = reader.result as string;
-          // Separa o cabeçalho data:mime/type;base64, da string pura
-          const base64Content = result.split(",")[1] || "";
-          resolve(base64Content);
-        };
-      });
-
-      reader.readAsDataURL(file);
-      const base64 = await base64Promise;
-
-      newAttachments.push({
-        name: file.name,
-        type: file.type || (file.name.endsWith(".md") ? "text/markdown" : "text/plain"),
-        base64,
-        previewUrl: isImage ? URL.createObjectURL(file) : undefined,
-      });
-    }
-
-    setAttachments((prev) => [...prev, ...newAttachments]);
-
-    // Reseta o input de arquivo para permitir reenviar o mesmo arquivo se quiser
-    if (fileInputRef.current) {
-      fileInputRef.current.value = "";
+    try {
+      setIsProcessingFile(true);
+      const processed = await processFile(file);
+      setAttachment(processed);
+    } catch (err) {
+      console.error("Erro ao comprimir e anexar arquivo:", err);
+    } finally {
+      setIsProcessingFile(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
     }
   };
 
-  const removeAttachment = (indexToRemove: number) => {
-    setAttachments((prev) => {
-      const target = prev[indexToRemove];
-      if (target?.previewUrl) {
-        URL.revokeObjectURL(target.previewUrl);
-      }
-      return prev.filter((_, idx) => idx !== indexToRemove);
-    });
+  const removeAttachment = () => {
+    setAttachment(null);
   };
 
-  const handleSubmit = (e?: React.FormEvent) => {
+  const handleSubmit = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if ((!input.trim() && attachments.length === 0) || isLoading) return;
+    if ((!input.trim() && !attachment) || isLoading || isProcessingFile || disabled) return;
 
-    onSendMessage(input.trim(), selectedModel, attachments);
+    const messageText = input.trim();
+    const currentAttachment = attachment || undefined;
+
     setInput("");
-    setAttachments([]);
+    setAttachment(null);
 
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
     }
+
+    await onSendMessage(messageText, currentAttachment, selectedModel);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -169,154 +179,131 @@ export function ChatBox({
     }
   };
 
-  const handleInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setInput(e.target.value);
-    e.target.style.height = "auto";
-    e.target.style.height = `${Math.min(e.target.scrollHeight, 180)}px`;
-  };
+  const currentModelObj = AVAILABLE_MODELS.find((m) => m.id === selectedModel) || AVAILABLE_MODELS[0];
 
   return (
-    <div className="w-full max-w-3xl relative">
-      <div className="relative rounded-2xl bg-[#0e1320]/80 backdrop-blur-xl border border-white/10 shadow-2xl focus-within:border-white/20 transition-all flex flex-col">
-        {/* Pré-visualização de Anexos */}
-        {attachments.length > 0 && (
-          <div className="flex items-center gap-2 p-3 pb-0 overflow-x-auto scrollbar-none">
-            {attachments.map((att, idx) => (
-              <div
-                key={idx}
-                className="relative group flex items-center gap-2 px-2.5 py-1.5 rounded-xl bg-white/5 border border-white/10 text-xs text-zinc-300 max-w-xs flex-shrink-0"
-              >
-                {att.previewUrl ? (
-                  <img
-                    src={att.previewUrl}
-                    alt={att.name}
-                    className="w-7 h-7 object-cover rounded-lg border border-white/10"
-                  />
-                ) : (
-                  <div className="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center flex-shrink-0">
-                    <FileText className="w-4 h-4" />
-                  </div>
-                )}
-                <span className="truncate max-w-[120px] text-zinc-200">{att.name}</span>
-                <button
-                  type="button"
-                  onClick={() => removeAttachment(idx)}
-                  className="p-1 rounded-md text-zinc-500 hover:text-rose-400 hover:bg-white/5 transition-colors"
-                  title="Remover anexo"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
+    <div className="w-full max-w-3xl mx-auto px-4 pb-4">
+      <div className="relative rounded-2xl bg-[#0d121f]/90 border border-white/10 backdrop-blur-md shadow-2xl transition-all focus-within:border-emerald-500/40">
+        {/* Preview de anexo carregado */}
+        {attachment && (
+          <div className="p-3 pb-0 flex items-center gap-2">
+            <div className="relative group flex items-center gap-2.5 px-3 py-1.5 rounded-xl bg-white/5 border border-white/10 max-w-xs">
+              {attachment.mimeType.startsWith("image/") ? (
+                <img
+                  src={`data:${attachment.mimeType};base64,${attachment.data}`}
+                  alt={attachment.name}
+                  className="w-9 h-9 rounded-lg object-cover border border-white/10"
+                />
+              ) : (
+                <div className="w-9 h-9 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
+                  <FileText className="w-5 h-5" />
+                </div>
+              )}
+
+              <div className="flex flex-col min-w-0 pr-4">
+                <span className="text-xs text-zinc-200 truncate font-medium">{attachment.name}</span>
+                <span className="text-[10px] text-zinc-500 uppercase">{attachment.mimeType.split("/")[1]}</span>
               </div>
-            ))}
+
+              <button
+                type="button"
+                onClick={removeAttachment}
+                className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-zinc-800 border border-white/20 text-zinc-400 hover:text-white flex items-center justify-center transition-colors shadow-md"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            </div>
           </div>
         )}
 
-        {/* Campo de Texto */}
-        <textarea
-          ref={textareaRef}
-          value={input}
-          onChange={handleInput}
-          onKeyDown={handleKeyDown}
-          placeholder={
-            attachments.length > 0
-              ? "Faça uma pergunta ou comando sobre o(s) arquivo(s)..."
-              : "Peça ao Satix..."
-          }
-          rows={1}
-          className="w-full resize-none bg-transparent px-4 pt-4 pb-14 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none scrollbar-none leading-relaxed"
-        />
+        {/* Campo de Entrada de Texto */}
+        <div className="p-3">
+          <textarea
+            ref={textareaRef}
+            rows={1}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            disabled={disabled || isLoading}
+            placeholder="Peça ao Satix..."
+            className="w-full bg-transparent resize-none outline-none text-sm text-zinc-100 placeholder-zinc-500 max-h-[180px] scrollbar-thin scrollbar-thumb-white/10"
+          />
+        </div>
 
-        {/* Input Oculto de Arquivo */}
-        <input
-          ref={fileInputRef}
-          type="file"
-          multiple
-          accept="image/*,.pdf,.txt,.md,.csv"
-          onChange={handleFileChange}
-          className="hidden"
-        />
+        {/* Rodapé: Controles, Model Selector e Botão de Envio */}
+        <div className="flex items-center justify-between px-3 pb-2.5 pt-1 border-t border-white/5">
+          <div className="flex items-center gap-2">
+            {/* Input oculto de arquivo */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*,application/pdf,text/*"
+              onChange={handleFileChange}
+              className="hidden"
+            />
 
-        <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between pointer-events-none">
-          {/* Ações da Esquerda */}
-          <div className="flex items-center gap-2 pointer-events-auto">
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
-              className="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-white/5 transition-colors"
-              title="Anexar arquivos (Imagens, PDFs, TXT)"
+              disabled={disabled || isLoading || isProcessingFile}
+              title="Anexar arquivo ou imagem"
+              className="p-2 rounded-xl text-zinc-400 hover:text-zinc-200 hover:bg-white/5 transition-colors disabled:opacity-40"
             >
-              <Paperclip className="w-4 h-4" />
+              {isProcessingFile ? (
+                <Loader2 className="w-4 h-4 animate-spin text-emerald-400" />
+              ) : (
+                <Paperclip className="w-4 h-4" />
+              )}
             </button>
 
-            {/* Dropdown de Modelo */}
+            {/* Menu de seleção de modelos */}
             <div className="relative" ref={dropdownRef}>
               <button
                 type="button"
-                onClick={() => setDropdownOpen((prev) => !prev)}
-                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-xs text-zinc-300 hover:text-white transition-colors"
+                onClick={() => setIsModelDropdownOpen(!isModelDropdownOpen)}
+                disabled={disabled || isLoading}
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-xs text-zinc-300 transition-colors border border-white/5"
               >
-                <Zap className="w-3.5 h-3.5 text-emerald-400" />
-                <span>{currentModel.name}</span>
-                <ChevronDown className="w-3 h-3 text-zinc-400" />
+                <Sparkles className="w-3 h-3 text-emerald-400" />
+                <span>{currentModelObj.name}</span>
+                <ChevronDown className="w-3 h-3 text-zinc-500" />
               </button>
 
-              {dropdownOpen && (
-                <div className="absolute bottom-full left-0 mb-2 w-56 rounded-xl bg-[#0c101d] border border-white/10 shadow-2xl p-1 z-50 animate-in fade-in zoom-in-95 duration-150">
-                  <div className="px-2.5 py-1.5 text-[10px] font-semibold tracking-wider text-zinc-500 uppercase">
-                    Modelo de IA
-                  </div>
-                  {AVAILABLE_MODELS.map((model) => {
-                    const isSelected = model.id === selectedModel;
-                    return (
-                      <button
-                        key={model.id}
-                        type="button"
-                        onClick={() => {
-                          onSelectModel(model.id);
-                          setDropdownOpen(false);
-                        }}
-                        className={`w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-xs transition-colors ${
-                          isSelected
-                            ? "bg-emerald-500/10 text-emerald-400 font-medium"
-                            : "text-zinc-300 hover:bg-white/5 hover:text-white"
-                        }`}
-                      >
-                        <div className="flex flex-col items-start">
-                          <span className="flex items-center gap-1.5">
-                            {model.name}
-                            <span className="text-[10px] px-1.5 py-0.2 rounded bg-white/10 text-zinc-400">
-                              {model.tag}
-                            </span>
-                          </span>
-                          <span className="text-[10px] text-zinc-500">
-                            {model.speed}
-                          </span>
-                        </div>
-                        {isSelected && <Check className="w-3.5 h-3.5 text-emerald-400" />}
-                      </button>
-                    );
-                  })}
+              {isModelDropdownOpen && (
+                <div className="absolute bottom-full left-0 mb-2 w-48 rounded-xl bg-[#090d16] border border-white/10 p-1.5 shadow-2xl z-30 animate-in fade-in zoom-in-95">
+                  {AVAILABLE_MODELS.map((model) => (
+                    <button
+                      key={model.id}
+                      type="button"
+                      onClick={() => {
+                        setSelectedModel(model.id);
+                        setIsModelDropdownOpen(false);
+                      }}
+                      className="w-full flex items-center justify-between p-2 rounded-lg text-left hover:bg-white/5 transition-colors"
+                    >
+                      <div>
+                        <div className="text-xs font-medium text-zinc-200">{model.name}</div>
+                        <div className="text-[10px] text-zinc-500">{model.desc}</div>
+                      </div>
+                      {selectedModel === model.id && <Check className="w-3.5 h-3.5 text-emerald-400" />}
+                    </button>
+                  ))}
                 </div>
               )}
             </div>
           </div>
 
-          {/* Botão de Envio */}
+          {/* Botão de envio */}
           <button
             type="button"
             onClick={() => handleSubmit()}
-            disabled={(!input.trim() && attachments.length === 0) || isLoading}
-            className={`p-2 rounded-xl transition-all pointer-events-auto ${
-              (input.trim() || attachments.length > 0) && !isLoading
-                ? "bg-emerald-500 text-zinc-950 hover:bg-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.3)]"
-                : "bg-white/5 text-zinc-500 cursor-not-allowed"
-            }`}
-            title="Enviar mensagem"
+            disabled={(!input.trim() && !attachment) || isLoading || isProcessingFile || disabled}
+            className="w-8 h-8 rounded-xl bg-emerald-500 hover:bg-emerald-400 disabled:bg-white/5 text-zinc-950 disabled:text-zinc-600 flex items-center justify-center transition-all shadow-[0_0_12px_rgba(16,185,129,0.25)] disabled:shadow-none"
           >
             {isLoading ? (
-              <Sparkles className="w-4 h-4 animate-spin" />
+              <Loader2 className="w-4 h-4 animate-spin text-zinc-400" />
             ) : (
-              <ArrowUp className="w-4 h-4" />
+              <ArrowUp className="w-4 h-4 stroke-[2.5]" />
             )}
           </button>
         </div>
