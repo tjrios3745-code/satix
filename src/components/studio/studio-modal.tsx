@@ -16,7 +16,9 @@ import {
   Scissors,
   Loader2,
   Send,
-  Palette
+  Palette,
+  Wand2,
+  PlusCircle
 } from "lucide-react";
 
 interface StudioModalProps {
@@ -43,7 +45,6 @@ const DEFAULT_FILTERS: FilterSettings = {
   blur: 0,
 };
 
-// Presets de cores e gradientes de estúdio profissional
 const BACKGROUND_PRESETS = [
   { id: "transparent", name: "Transparente", style: "transparent", color: "transparent" },
   { id: "white", name: "Estúdio Branco", style: "#ffffff", color: "#ffffff" },
@@ -64,9 +65,30 @@ export function StudioModal({ isOpen, onClose, onSendToChat }: StudioModalProps)
   const [selectedBg, setSelectedBg] = useState<string>("transparent");
   const [promptPrompt, setPromptPrompt] = useState<string>("");
 
+  // Estados de IA Generativa
+  const [activeTab, setActiveTab] = useState<"edit" | "generate">("edit");
+  const [generatePrompt, setGeneratePrompt] = useState<string>("");
+  const [enhancePrompt, setEnhancePrompt] = useState<string>("");
+  const [isGenerating, setIsGenerating] = useState<boolean>(false);
+
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const originalImageRef = useRef<HTMLImageElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const loadImageToCanvas = (src: string) => {
+    setImageSrc(src);
+    setFilters(DEFAULT_FILTERS);
+    setRotation(0);
+    setSelectedBg("transparent");
+
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => {
+      originalImageRef.current = img;
+      renderCanvas();
+    };
+    img.src = src;
+  };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -74,18 +96,7 @@ export function StudioModal({ isOpen, onClose, onSendToChat }: StudioModalProps)
 
     const reader = new FileReader();
     reader.onload = (event) => {
-      const src = event.target?.result as string;
-      setImageSrc(src);
-      setFilters(DEFAULT_FILTERS);
-      setRotation(0);
-      setSelectedBg("transparent");
-
-      const img = new Image();
-      img.onload = () => {
-        originalImageRef.current = img;
-        renderCanvas();
-      };
-      img.src = src;
+      loadImageToCanvas(event.target?.result as string);
     };
     reader.readAsDataURL(file);
   };
@@ -104,7 +115,6 @@ export function StudioModal({ isOpen, onClose, onSendToChat }: StudioModalProps)
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // 1. Desenha o fundo selecionado (se não for transparente e não estiver em modo comparação)
     if (!isComparing && selectedBg !== "transparent") {
       const preset = BACKGROUND_PRESETS.find((b) => b.id === selectedBg);
       if (preset) {
@@ -134,7 +144,6 @@ export function StudioModal({ isOpen, onClose, onSendToChat }: StudioModalProps)
       }
     }
 
-    // 2. Desenha a foto com rotação e filtros
     ctx.save();
     ctx.translate(canvas.width / 2, canvas.height / 2);
     ctx.rotate((rotation * Math.PI) / 180);
@@ -155,29 +164,81 @@ export function StudioModal({ isOpen, onClose, onSendToChat }: StudioModalProps)
     }
   }, [filters, rotation, isComparing, selectedBg, imageSrc]);
 
-  // Remoção de fundo 1-clique via IA WebAssembly no cliente
   const handleRemoveBackground = async () => {
     if (!imageSrc || isRemovingBg) return;
 
     try {
       setIsRemovingBg(true);
       const { removeBackground } = await import("@imgly/background-removal");
-      
       const blob = await removeBackground(imageSrc);
       const newUrl = URL.createObjectURL(blob);
-      setImageSrc(newUrl);
-
-      const newImg = new Image();
-      newImg.onload = () => {
-        originalImageRef.current = newImg;
-        renderCanvas();
-      };
-      newImg.src = newUrl;
+      loadImageToCanvas(newUrl);
     } catch (error) {
       console.error("Falha ao remover fundo:", error);
       alert("Não foi possível recortar o fundo desta imagem.");
     } finally {
       setIsRemovingBg(false);
+    }
+  };
+
+  // Criação do zero via Imagen 3
+  const handleGenerateFromText = async () => {
+    if (!generatePrompt.trim() || isGenerating) return;
+
+    try {
+      setIsGenerating(true);
+      const res = await fetch("/api/studio/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mode: "create",
+          prompt: generatePrompt.trim(),
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Falha ao gerar imagem.");
+
+      loadImageToCanvas(data.imageUrl);
+      setActiveTab("edit");
+      setGeneratePrompt("");
+    } catch (err: any) {
+      console.error(err);
+      alert(err.message || "Erro ao gerar imagem com IA.");
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  // Aprimoramento da imagem atual via IA
+  const handleEnhanceWithAI = async () => {
+    const canvas = canvasRef.current;
+    if (!canvas || isGenerating) return;
+
+    try {
+      setIsGenerating(true);
+      const base64 = canvas.toDataURL("image/jpeg", 0.85).split(",")[1];
+
+      const res = await fetch("/api/studio/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mode: "enhance",
+          imageBase64: base64,
+          prompt: enhancePrompt.trim() || undefined,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Falha ao aprimorar imagem.");
+
+      loadImageToCanvas(data.imageUrl);
+      setEnhancePrompt("");
+    } catch (err: any) {
+      console.error(err);
+      alert(err.message || "Erro ao aprimorar imagem.");
+    } finally {
+      setIsGenerating(false);
     }
   };
 
@@ -239,20 +300,39 @@ export function StudioModal({ isOpen, onClose, onSendToChat }: StudioModalProps)
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4 animate-in fade-in duration-200">
       <div className="relative w-full max-w-5xl h-[90vh] bg-[#090d16] border border-white/10 rounded-2xl flex flex-col overflow-hidden shadow-2xl">
         
-        {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-white/10 bg-[#0d121f]">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
-              <Sparkles className="w-4 h-4" />
-            </div>
-            <div>
+        {/* Header com Navegação por Abas */}
+        <div className="flex items-center justify-between px-6 py-3.5 border-b border-white/10 bg-[#0d121f]">
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
+                <Sparkles className="w-4 h-4" />
+              </div>
               <h2 className="text-base font-semibold text-zinc-100 flex items-center gap-2">
                 SATIX Studio
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-normal">
-                  IA & Estúdio Visual
-                </span>
               </h2>
-              <p className="text-xs text-zinc-400">Recorte neural, ambientação de fundo e ajustes</p>
+            </div>
+
+            <div className="flex items-center bg-white/5 border border-white/10 rounded-xl p-1">
+              <button
+                onClick={() => setActiveTab("edit")}
+                className={`px-3 py-1 rounded-lg text-xs font-medium transition-all ${
+                  activeTab === "edit"
+                    ? "bg-emerald-500 text-zinc-950 shadow"
+                    : "text-zinc-400 hover:text-white"
+                }`}
+              >
+                Editor & Ajustes
+              </button>
+              <button
+                onClick={() => setActiveTab("generate")}
+                className={`px-3 py-1 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all ${
+                  activeTab === "generate"
+                    ? "bg-emerald-500 text-zinc-950 shadow"
+                    : "text-zinc-400 hover:text-white"
+                }`}
+              >
+                <PlusCircle className="w-3.5 h-3.5" /> Criar com IA
+              </button>
             </div>
           </div>
 
@@ -263,16 +343,14 @@ export function StudioModal({ isOpen, onClose, onSendToChat }: StudioModalProps)
                   onClick={handleReset}
                   className="px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/5 text-xs text-zinc-300 flex items-center gap-1.5 transition-colors"
                 >
-                  <RefreshCw className="w-3.5 h-3.5" />
-                  Resetar
+                  <RefreshCw className="w-3.5 h-3.5" /> Resetar
                 </button>
 
                 <button
                   onClick={handleDownload}
                   className="px-4 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-xs font-medium text-zinc-950 flex items-center gap-1.5 transition-all shadow-[0_0_12px_rgba(16,185,129,0.3)]"
                 >
-                  <Download className="w-3.5 h-3.5" />
-                  Baixar Imagem
+                  <Download className="w-3.5 h-3.5" /> Baixar
                 </button>
               </>
             )}
@@ -285,10 +363,10 @@ export function StudioModal({ isOpen, onClose, onSendToChat }: StudioModalProps)
           </div>
         </div>
 
-        {/* Viewport */}
+        {/* Corpo Principal */}
         <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
           
-          {/* Lado Esquerdo: Canvas */}
+          {/* Canvas Viewport */}
           <div className="flex-1 bg-[#05070c] relative flex items-center justify-center p-6 overflow-auto">
             {imageSrc ? (
               <div className="relative max-w-full max-h-full flex items-center justify-center">
@@ -306,10 +384,12 @@ export function StudioModal({ isOpen, onClose, onSendToChat }: StudioModalProps)
                   />
                 </div>
 
-                {isRemovingBg && (
+                {(isRemovingBg || isGenerating) && (
                   <div className="absolute inset-0 bg-black/60 backdrop-blur-sm rounded-lg flex flex-col items-center justify-center gap-3 text-white">
                     <Loader2 className="w-8 h-8 animate-spin text-emerald-400" />
-                    <span className="text-xs font-medium tracking-wide">Removendo fundo com IA...</span>
+                    <span className="text-xs font-medium tracking-wide">
+                      {isRemovingBg ? "Recortando fundo neural..." : "Processando geração com IA..."}
+                    </span>
                   </div>
                 )}
 
@@ -329,14 +409,22 @@ export function StudioModal({ isOpen, onClose, onSendToChat }: StudioModalProps)
                 <div className="w-14 h-14 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 mb-4">
                   <Upload className="w-7 h-7" />
                 </div>
-                <h3 className="text-sm font-medium text-zinc-200 mb-1">Selecione uma imagem</h3>
-                <p className="text-xs text-zinc-500 mb-5">Suporta fotos de pessoas, produtos ou animais</p>
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-zinc-950 text-xs font-medium transition-all shadow-md"
-                >
-                  Carregar Foto
-                </button>
+                <h3 className="text-sm font-medium text-zinc-200 mb-1">Nenhuma imagem carregada</h3>
+                <p className="text-xs text-zinc-500 mb-5">Carregue um arquivo ou gere uma nova imagem com IA</p>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/15 border border-white/10 text-white text-xs font-medium transition-all"
+                  >
+                    Carregar Foto
+                  </button>
+                  <button
+                    onClick={() => setActiveTab("generate")}
+                    className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-zinc-950 text-xs font-medium transition-all shadow-md flex items-center gap-1.5"
+                  >
+                    <Wand2 className="w-3.5 h-3.5" /> Criar com IA
+                  </button>
+                </div>
               </div>
             )}
 
@@ -349,190 +437,207 @@ export function StudioModal({ isOpen, onClose, onSendToChat }: StudioModalProps)
             />
           </div>
 
-          {/* Lado Direito: Controles */}
-          <div className="w-full lg:w-84 bg-[#0a0f1d] border-t lg:border-t-0 lg:border-l border-white/10 p-5 flex flex-col gap-5 overflow-y-auto">
+          {/* Painel Lateral */}
+          <div className="w-full lg:w-88 bg-[#0a0f1d] border-t lg:border-t-0 lg:border-l border-white/10 p-5 flex flex-col gap-5 overflow-y-auto">
             
-            {/* Ações de IA: Remoção de Fundo */}
-            <div>
-              <span className="text-xs font-semibold text-emerald-400 uppercase tracking-wider block mb-2.5 flex items-center gap-1.5">
-                <Scissors className="w-3.5 h-3.5" /> Ações Rápidas de IA
-              </span>
-              <button
-                onClick={handleRemoveBackground}
-                disabled={!imageSrc || isRemovingBg}
-                className="w-full py-2.5 px-3 rounded-xl bg-gradient-to-r from-emerald-500/20 to-cyan-500/20 hover:from-emerald-500/30 hover:to-cyan-500/30 border border-emerald-500/30 text-xs text-emerald-300 font-medium flex items-center justify-center gap-2 transition-all disabled:opacity-40"
-              >
-                {isRemovingBg ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <Scissors className="w-4 h-4" />
+            {activeTab === "generate" ? (
+              /* Aba: Geração do Zero com IA */
+              <div className="space-y-4">
+                <div>
+                  <span className="text-xs font-semibold text-emerald-400 uppercase tracking-wider block mb-1">
+                    Criar Imagem do Zero
+                  </span>
+                  <p className="text-[11px] text-zinc-400 mb-3">
+                    Descreva o que deseja e o modelo gerará a imagem para o canvas.
+                  </p>
+                  <textarea
+                    rows={4}
+                    value={generatePrompt}
+                    onChange={(e) => setGeneratePrompt(e.target.value)}
+                    placeholder="Ex: Uma garrafa de café moderna em uma mesa de madeira escura com iluminação suave de estúdio, resolução 4k..."
+                    className="w-full p-3 rounded-xl bg-white/5 border border-white/10 text-xs text-zinc-100 placeholder-zinc-500 outline-none focus:border-emerald-500/50 resize-none"
+                  />
+                </div>
+
+                <button
+                  onClick={handleGenerateFromText}
+                  disabled={!generatePrompt.trim() || isGenerating}
+                  className="w-full py-2.5 px-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-xs text-zinc-950 font-medium flex items-center justify-center gap-2 transition-all shadow-lg disabled:opacity-40"
+                >
+                  {isGenerating ? (
+                    <Loader2 className="w-4 h-4 animate-spin text-zinc-950" />
+                  ) : (
+                    <Wand2 className="w-4 h-4" />
+                  )}
+                  <span>Gerar Imagem no Estúdio</span>
+                </button>
+              </div>
+            ) : (
+              /* Aba: Edição, Aprimoramento e Ajustes */
+              <>
+                {/* Melhorar com IA / Upscale */}
+                {imageSrc && (
+                  <div className="p-3 rounded-xl bg-white/[0.02] border border-white/5 space-y-2.5">
+                    <span className="text-xs font-semibold text-zinc-200 flex items-center gap-1.5">
+                      <Wand2 className="w-3.5 h-3.5 text-emerald-400" /> Aprimorar Imagem com IA
+                    </span>
+                    <input
+                      type="text"
+                      value={enhancePrompt}
+                      onChange={(e) => setEnhancePrompt(e.target.value)}
+                      placeholder="Instrução opcional (ex: mais nitidez, cores quentes)..."
+                      className="w-full px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-xs text-zinc-200 placeholder-zinc-500 outline-none"
+                    />
+                    <button
+                      onClick={handleEnhanceWithAI}
+                      disabled={isGenerating}
+                      className="w-full py-2 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/30 text-xs text-emerald-300 font-medium flex items-center justify-center gap-1.5 transition-all disabled:opacity-40"
+                    >
+                      {isGenerating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                      <span>Aprimorar Detalhes & Luz</span>
+                    </button>
+                  </div>
                 )}
-                <span>Remover Fundo (1 Clique)</span>
-              </button>
-            </div>
 
-            {/* Novo Fundo de Estúdio */}
-            <div>
-              <span className="text-xs font-semibold text-zinc-300 uppercase tracking-wider block mb-2.5 flex items-center gap-1.5">
-                <Palette className="w-3.5 h-3.5 text-zinc-400" /> Cenário & Fundo
-              </span>
-              <div className="grid grid-cols-4 gap-2">
-                {BACKGROUND_PRESETS.map((preset) => (
+                {/* Recorte Inteligente */}
+                <div>
+                  <span className="text-xs font-semibold text-emerald-400 uppercase tracking-wider block mb-2 flex items-center gap-1.5">
+                    <Scissors className="w-3.5 h-3.5" /> Recorte de Fundo
+                  </span>
                   <button
-                    key={preset.id}
-                    onClick={() => setSelectedBg(preset.id)}
-                    disabled={!imageSrc}
-                    title={preset.name}
-                    className={`h-9 rounded-lg border flex items-center justify-center relative transition-all disabled:opacity-40 ${
-                      selectedBg === preset.id
-                        ? "border-emerald-400 scale-105 shadow-[0_0_8px_rgba(16,185,129,0.4)]"
-                        : "border-white/10 hover:border-white/30"
-                    }`}
-                    style={{ background: preset.style }}
+                    onClick={handleRemoveBackground}
+                    disabled={!imageSrc || isRemovingBg}
+                    className="w-full py-2.5 px-3 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs text-zinc-200 font-medium flex items-center justify-center gap-2 transition-all disabled:opacity-40"
                   >
-                    {preset.id === "transparent" && (
-                      <span className="text-[10px] text-zinc-400 font-medium select-none">Transp.</span>
-                    )}
+                    {isRemovingBg ? <Loader2 className="w-4 h-4 animate-spin text-emerald-400" /> : <Scissors className="w-4 h-4 text-emerald-400" />}
+                    <span>Remover Fundo (1 Clique)</span>
                   </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Orientação */}
-            <div>
-              <span className="text-xs font-semibold text-zinc-300 uppercase tracking-wider block mb-2.5">
-                Girar Imagem
-              </span>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => setRotation((r) => (r - 90 + 360) % 360)}
-                  disabled={!imageSrc}
-                  className="flex-1 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/5 text-xs text-zinc-300 flex items-center justify-center gap-2 disabled:opacity-40 transition-colors"
-                >
-                  <RotateCcw className="w-3.5 h-3.5" /> -90°
-                </button>
-                <button
-                  onClick={() => setRotation((r) => (r + 90) % 360)}
-                  disabled={!imageSrc}
-                  className="flex-1 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/5 text-xs text-zinc-300 flex items-center justify-center gap-2 disabled:opacity-40 transition-colors"
-                >
-                  <RotateCw className="w-3.5 h-3.5" /> +90°
-                </button>
-              </div>
-            </div>
-
-            {/* Ajustes Manuais */}
-            <div className="space-y-3.5">
-              <span className="text-xs font-semibold text-zinc-300 uppercase tracking-wider block">
-                Luz & Tonalidade
-              </span>
-
-              <div>
-                <div className="flex justify-between text-xs text-zinc-400 mb-1">
-                  <span className="flex items-center gap-1.5"><Sun className="w-3.5 h-3.5 text-zinc-500" /> Brilho</span>
-                  <span>{filters.brightness}%</span>
                 </div>
-                <input
-                  type="range"
-                  min="50"
-                  max="150"
-                  value={filters.brightness}
-                  disabled={!imageSrc}
-                  onChange={(e) => setFilters({ ...filters, brightness: Number(e.target.value) })}
-                  className="w-full accent-emerald-500 disabled:opacity-40 cursor-pointer"
-                />
-              </div>
 
-              <div>
-                <div className="flex justify-between text-xs text-zinc-400 mb-1">
-                  <span className="flex items-center gap-1.5"><Contrast className="w-3.5 h-3.5 text-zinc-500" /> Contraste</span>
-                  <span>{filters.contrast}%</span>
+                {/* Cenários & Fundo */}
+                <div>
+                  <span className="text-xs font-semibold text-zinc-300 uppercase tracking-wider block mb-2 flex items-center gap-1.5">
+                    <Palette className="w-3.5 h-3.5 text-zinc-400" /> Cenário de Fundo
+                  </span>
+                  <div className="grid grid-cols-4 gap-2">
+                    {BACKGROUND_PRESETS.map((preset) => (
+                      <button
+                        key={preset.id}
+                        onClick={() => setSelectedBg(preset.id)}
+                        disabled={!imageSrc}
+                        title={preset.name}
+                        className={`h-8 rounded-lg border flex items-center justify-center relative transition-all disabled:opacity-40 ${
+                          selectedBg === preset.id
+                            ? "border-emerald-400 scale-105 shadow-[0_0_8px_rgba(16,185,129,0.4)]"
+                            : "border-white/10 hover:border-white/30"
+                        }`}
+                        style={{ background: preset.style }}
+                      >
+                        {preset.id === "transparent" && (
+                          <span className="text-[10px] text-zinc-400 font-medium select-none">Transp.</span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-                <input
-                  type="range"
-                  min="50"
-                  max="150"
-                  value={filters.contrast}
-                  disabled={!imageSrc}
-                  onChange={(e) => setFilters({ ...filters, contrast: Number(e.target.value) })}
-                  className="w-full accent-emerald-500 disabled:opacity-40 cursor-pointer"
-                />
-              </div>
 
-              <div>
-                <div className="flex justify-between text-xs text-zinc-400 mb-1">
-                  <span className="flex items-center gap-1.5"><Sliders className="w-3.5 h-3.5 text-zinc-500" /> Saturação</span>
-                  <span>{filters.saturation}%</span>
+                {/* Giro */}
+                <div>
+                  <span className="text-xs font-semibold text-zinc-300 uppercase tracking-wider block mb-2">
+                    Girar
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setRotation((r) => (r - 90 + 360) % 360)}
+                      disabled={!imageSrc}
+                      className="flex-1 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/5 text-xs text-zinc-300 flex items-center justify-center gap-1.5 disabled:opacity-40"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" /> -90°
+                    </button>
+                    <button
+                      onClick={() => setRotation((r) => (r + 90) % 360)}
+                      disabled={!imageSrc}
+                      className="flex-1 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/5 text-xs text-zinc-300 flex items-center justify-center gap-1.5 disabled:opacity-40"
+                    >
+                      <RotateCw className="w-3.5 h-3.5" /> +90°
+                    </button>
+                  </div>
                 </div>
-                <input
-                  type="range"
-                  min="0"
-                  max="200"
-                  value={filters.saturation}
-                  disabled={!imageSrc}
-                  onChange={(e) => setFilters({ ...filters, saturation: Number(e.target.value) })}
-                  className="w-full accent-emerald-500 disabled:opacity-40 cursor-pointer"
-                />
-              </div>
-            </div>
 
-            {/* Filtros Prontos */}
-            <div className="space-y-2.5">
-              <span className="text-xs font-semibold text-zinc-300 uppercase tracking-wider block">
-                Filtros Rápidos
-              </span>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  onClick={() => setFilters({ ...DEFAULT_FILTERS, grayscale: 100 })}
-                  disabled={!imageSrc}
-                  className="py-1.5 px-2.5 rounded-lg bg-white/5 hover:bg-white/10 text-xs text-zinc-300 border border-white/5 disabled:opacity-40 transition-colors"
-                >
-                  P&B
-                </button>
-                <button
-                  onClick={() => setFilters({ ...DEFAULT_FILTERS, sepia: 75, contrast: 110 })}
-                  disabled={!imageSrc}
-                  className="py-1.5 px-2.5 rounded-lg bg-white/5 hover:bg-white/10 text-xs text-zinc-300 border border-white/5 disabled:opacity-40 transition-colors"
-                >
-                  Vintage
-                </button>
-                <button
-                  onClick={() => setFilters({ ...DEFAULT_FILTERS, contrast: 125, saturation: 130 })}
-                  disabled={!imageSrc}
-                  className="py-1.5 px-2.5 rounded-lg bg-white/5 hover:bg-white/10 text-xs text-zinc-300 border border-white/5 disabled:opacity-40 transition-colors"
-                >
-                  Vívido
-                </button>
-                <button
-                  onClick={() => setFilters({ ...DEFAULT_FILTERS, brightness: 105, contrast: 115, saturation: 90 })}
-                  disabled={!imageSrc}
-                  className="py-1.5 px-2.5 rounded-lg bg-white/5 hover:bg-white/10 text-xs text-zinc-300 border border-white/5 disabled:opacity-40 transition-colors"
-                >
-                  Cinemático
-                </button>
-              </div>
-            </div>
+                {/* Ajustes Manuais */}
+                <div className="space-y-3">
+                  <span className="text-xs font-semibold text-zinc-300 uppercase tracking-wider block">
+                    Ajustes Manuais
+                  </span>
 
-            {/* Levar para o Chat */}
-            {imageSrc && onSendToChat && (
-              <div className="pt-3 border-t border-white/5 space-y-2">
-                <span className="text-xs font-semibold text-zinc-300 uppercase tracking-wider block">
-                  Levar para o Chat
-                </span>
-                <input
-                  type="text"
-                  value={promptPrompt}
-                  onChange={(e) => setPromptPrompt(e.target.value)}
-                  placeholder="Pergunta ou instrução para a IA..."
-                  className="w-full px-3 py-1.5 rounded-xl bg-white/5 border border-white/10 text-xs text-zinc-100 placeholder-zinc-500 outline-none focus:border-emerald-500/50"
-                />
-                <button
-                  onClick={handleSendResultToChat}
-                  className="w-full py-2 rounded-xl bg-white/10 hover:bg-white/20 border border-white/10 text-xs text-zinc-200 flex items-center justify-center gap-2 transition-colors"
-                >
-                  <Send className="w-3.5 h-3.5 text-emerald-400" /> Conversar sobre esta edição
-                </button>
-              </div>
+                  <div>
+                    <div className="flex justify-between text-xs text-zinc-400 mb-1">
+                      <span className="flex items-center gap-1.5"><Sun className="w-3.5 h-3.5 text-zinc-500" /> Brilho</span>
+                      <span>{filters.brightness}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="50"
+                      max="150"
+                      value={filters.brightness}
+                      disabled={!imageSrc}
+                      onChange={(e) => setFilters({ ...filters, brightness: Number(e.target.value) })}
+                      className="w-full accent-emerald-500 disabled:opacity-40 cursor-pointer"
+                    />
+                  </div>
+
+                  <div>
+                    <div className="flex justify-between text-xs text-zinc-400 mb-1">
+                      <span className="flex items-center gap-1.5"><Contrast className="w-3.5 h-3.5 text-zinc-500" /> Contraste</span>
+                      <span>{filters.contrast}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="50"
+                      max="150"
+                      value={filters.contrast}
+                      disabled={!imageSrc}
+                      onChange={(e) => setFilters({ ...filters, contrast: Number(e.target.value) })}
+                      className="w-full accent-emerald-500 disabled:opacity-40 cursor-pointer"
+                    />
+                  </div>
+
+                  <div>
+                    <div className="flex justify-between text-xs text-zinc-400 mb-1">
+                      <span className="flex items-center gap-1.5"><Sliders className="w-3.5 h-3.5 text-zinc-500" /> Saturação</span>
+                      <span>{filters.saturation}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0"
+                      max="200"
+                      value={filters.saturation}
+                      disabled={!imageSrc}
+                      onChange={(e) => setFilters({ ...filters, saturation: Number(e.target.value) })}
+                      className="w-full accent-emerald-500 disabled:opacity-40 cursor-pointer"
+                    />
+                  </div>
+                </div>
+
+                {/* Levar ao Chat */}
+                {imageSrc && onSendToChat && (
+                  <div className="pt-3 border-t border-white/5 space-y-2">
+                    <input
+                      type="text"
+                      value={promptPrompt}
+                      onChange={(e) => setPromptPrompt(e.target.value)}
+                      placeholder="Pergunta sobre esta edição..."
+                      className="w-full px-3 py-1.5 rounded-xl bg-white/5 border border-white/10 text-xs text-zinc-100 placeholder-zinc-500 outline-none focus:border-emerald-500/50"
+                    />
+                    <button
+                      onClick={handleSendResultToChat}
+                      className="w-full py-2 rounded-xl bg-white/10 hover:bg-white/20 border border-white/10 text-xs text-zinc-200 flex items-center justify-center gap-2 transition-colors"
+                    >
+                      <Send className="w-3.5 h-3.5 text-emerald-400" /> Levar ao Chat
+                    </button>
+                  </div>
+                )}
+              </>
             )}
           </div>
         </div>
