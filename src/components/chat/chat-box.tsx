@@ -34,7 +34,7 @@ export interface ChatBoxProps {
 
 const AVAILABLE_MODELS = [
   { id: "gemini-3.6-flash", name: "Flash", desc: "Rápido e balanceado", isPro: false },
-  { id: "gemini-3.6-flash-lite", name: "Flash Lite", desc: "Ultra veloz", isPro: false },
+  { id: "gemini-3.5-flash-lite", name: "Flash Lite", desc: "Ultra veloz", isPro: false },
   { id: "gemini-2.5-pro", name: "Pro", desc: "Raciocínio complexo", isPro: true },
 ];
 
