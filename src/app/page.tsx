@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, Suspense } from "react";
+import { useState, useRef, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
 import { Header } from "@/components/layout/header";
 import { Sidebar } from "@/components/layout/sidebar";
@@ -11,6 +11,7 @@ import { AuthModal } from "@/components/auth/auth-modal";
 import { StudioModal } from "@/components/studio/studio-modal";
 import { PricingModal } from "@/components/pricing/pricing-modal";
 import { PaymentSuccessModal } from "@/components/ui/payment-success-modal";
+import { SettingsModal } from "@/components/settings/settings-modal";
 import { 
   Zap, 
   User as UserIcon, 
@@ -25,8 +26,7 @@ import {
   SearchCode,
   Crown,
   Layers,
-  Wand2,
-  CheckCircle2
+  Wand2
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { User } from "@supabase/supabase-js";
@@ -76,6 +76,7 @@ export default function Home() {
   const [isStudioOpen, setIsStudioOpen] = useState(false);
   const [isPricingOpen, setIsPricingOpen] = useState(false);
   const [isPaymentSuccessOpen, setIsPaymentSuccessOpen] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
   const [currentTab, setCurrentTab] = useState<FeatureTab>("chat");
   const [currentChatId, setCurrentChatId] = useState<string | null>(null);
@@ -105,7 +106,6 @@ export default function Home() {
     }
   };
 
-  // Escuta status da autenticação e verifica parâmetros de retorno do Mercado Pago (?payment=success)
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
       const currentUser = data.user;
@@ -125,14 +125,11 @@ export default function Home() {
       }
     });
 
-    // Detecta feedback de pagamento na URL
     if (typeof window !== "undefined") {
       const urlParams = new URLSearchParams(window.location.search);
       if (urlParams.get("payment") === "success") {
         setIsPaymentSuccessOpen(true);
-        // Atualiza o estado do tier para PRO na interface
         setUserTier("pro");
-        // Limpa a URL sem dar refresh na página
         window.history.replaceState({}, document.title, window.location.pathname);
       }
     }
@@ -454,6 +451,17 @@ export default function Home() {
         onClose={() => setIsPaymentSuccessOpen(false)}
       />
 
+      <SettingsModal
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        user={user}
+        userTier={userTier}
+        onOpenPricing={() => setIsPricingOpen(true)}
+        onClearHistory={() => {
+          handleNewChat();
+        }}
+      />
+
       <StudioModal
         isOpen={isStudioOpen}
         onClose={() => setIsStudioOpen(false)}
@@ -487,6 +495,7 @@ export default function Home() {
           onSelectTab={handleSelectTab}
           onSelectChat={handleSelectChat}
           onNewChat={handleNewChat}
+          onOpenSettings={() => setIsSettingsOpen(true)}
         />
 
         <main className="flex-1 flex flex-col relative w-full h-full">
@@ -500,7 +509,6 @@ export default function Home() {
           ) : messages.length === 0 ? (
             <div className="flex-1 flex flex-col items-center justify-center px-4 -translate-y-2 w-full max-w-4xl mx-auto overflow-y-auto">
               
-              {/* Topo / Banner de Destaque PRO */}
               <div className="w-full text-center mb-6">
                 <div className="flex items-center justify-center gap-2 mb-3">
                   <button
@@ -520,7 +528,6 @@ export default function Home() {
                 </p>
               </div>
 
-              {/* Pilares de Diferenciais do SATIX PRO (Mini Showcase) */}
               <div className="w-full grid grid-cols-3 gap-2 sm:gap-3 mb-6">
                 <div className="p-2.5 sm:p-3 rounded-xl bg-white/[0.02] border border-white/5 flex flex-col items-center text-center">
                   <div className="w-7 h-7 rounded-lg bg-emerald-500/10 text-emerald-400 flex items-center justify-center mb-1.5">
@@ -553,7 +560,6 @@ export default function Home() {
                 </div>
               </div>
 
-              {/* Cards de Ações Rápidas */}
               <div className="w-full grid grid-cols-1 sm:grid-cols-2 gap-2.5 mb-6">
                 {QUICK_ACTIONS.map((action, idx) => {
                   const Icon = action.icon;
@@ -579,7 +585,6 @@ export default function Home() {
                 })}
               </div>
 
-              {/* Chat Input */}
               <div className="w-full flex justify-center">
                 <ChatBox
                   onSendMessage={handleSendMessage}
