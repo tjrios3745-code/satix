@@ -13,18 +13,23 @@ import {
   Sparkles, 
   RefreshCw, 
   Eye, 
-  Scissors,
-  Loader2,
-  Send,
-  Palette,
-  Wand2,
-  PlusCircle
+  Scissors, 
+  Loader2, 
+  Send, 
+  Palette, 
+  Wand2, 
+  PlusCircle,
+  Lock,
+  Crown
 } from "lucide-react";
 
 interface StudioModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSendToChat?: (imageUrl: string, prompt?: string) => void;
+  userId?: string;
+  userTier?: string;
+  onRequireUpgrade?: () => void;
 }
 
 interface FilterSettings {
@@ -56,7 +61,14 @@ const BACKGROUND_PRESETS = [
   { id: "gradient-studio", name: "Luz de Foco", style: "radial-gradient(circle, #334155 0%, #0f172a 100%)", type: "radial", stops: ["#334155", "#0f172a"] },
 ];
 
-export function StudioModal({ isOpen, onClose, onSendToChat }: StudioModalProps) {
+export function StudioModal({ 
+  isOpen, 
+  onClose, 
+  onSendToChat, 
+  userId, 
+  userTier = "free", 
+  onRequireUpgrade 
+}: StudioModalProps) {
   const [imageSrc, setImageSrc] = useState<string | null>(null);
   const [filters, setFilters] = useState<FilterSettings>(DEFAULT_FILTERS);
   const [rotation, setRotation] = useState<number>(0);
@@ -65,7 +77,6 @@ export function StudioModal({ isOpen, onClose, onSendToChat }: StudioModalProps)
   const [selectedBg, setSelectedBg] = useState<string>("transparent");
   const [promptPrompt, setPromptPrompt] = useState<string>("");
 
-  // Estados de IA Generativa
   const [activeTab, setActiveTab] = useState<"edit" | "generate">("edit");
   const [generatePrompt, setGeneratePrompt] = useState<string>("");
   const [enhancePrompt, setEnhancePrompt] = useState<string>("");
@@ -74,6 +85,8 @@ export function StudioModal({ isOpen, onClose, onSendToChat }: StudioModalProps)
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const originalImageRef = useRef<HTMLImageElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const isProOrBusiness = userTier === "pro" || userTier === "business";
 
   const loadImageToCanvas = (src: string) => {
     setImageSrc(src);
@@ -164,6 +177,7 @@ export function StudioModal({ isOpen, onClose, onSendToChat }: StudioModalProps)
     }
   }, [filters, rotation, isComparing, selectedBg, imageSrc]);
 
+  // Recorte é GRATUITO para todos os tiers (processado no cliente)
   const handleRemoveBackground = async () => {
     if (!imageSrc || isRemovingBg) return;
 
@@ -181,8 +195,13 @@ export function StudioModal({ isOpen, onClose, onSendToChat }: StudioModalProps)
     }
   };
 
-  // Criação do zero via Imagen 3
+  // Trava de criação via IA
   const handleGenerateFromText = async () => {
+    if (!isProOrBusiness) {
+      onRequireUpgrade?.();
+      return;
+    }
+
     if (!generatePrompt.trim() || isGenerating) return;
 
     try {
@@ -193,6 +212,7 @@ export function StudioModal({ isOpen, onClose, onSendToChat }: StudioModalProps)
         body: JSON.stringify({
           mode: "create",
           prompt: generatePrompt.trim(),
+          userId: userId,
         }),
       });
 
@@ -210,8 +230,13 @@ export function StudioModal({ isOpen, onClose, onSendToChat }: StudioModalProps)
     }
   };
 
-  // Aprimoramento da imagem atual via IA
+  // Trava de aprimoramento via IA
   const handleEnhanceWithAI = async () => {
+    if (!isProOrBusiness) {
+      onRequireUpgrade?.();
+      return;
+    }
+
     const canvas = canvasRef.current;
     if (!canvas || isGenerating) return;
 
@@ -226,6 +251,7 @@ export function StudioModal({ isOpen, onClose, onSendToChat }: StudioModalProps)
           mode: "enhance",
           imageBase64: base64,
           prompt: enhancePrompt.trim() || undefined,
+          userId: userId,
         }),
       });
 
@@ -300,7 +326,7 @@ export function StudioModal({ isOpen, onClose, onSendToChat }: StudioModalProps)
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4 animate-in fade-in duration-200">
       <div className="relative w-full max-w-5xl h-[90vh] bg-[#090d16] border border-white/10 rounded-2xl flex flex-col overflow-hidden shadow-2xl">
         
-        {/* Header com Navegação por Abas */}
+        {/* Header */}
         <div className="flex items-center justify-between px-6 py-3.5 border-b border-white/10 bg-[#0d121f]">
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-3">
@@ -331,7 +357,13 @@ export function StudioModal({ isOpen, onClose, onSendToChat }: StudioModalProps)
                     : "text-zinc-400 hover:text-white"
                 }`}
               >
-                <PlusCircle className="w-3.5 h-3.5" /> Criar com IA
+                <PlusCircle className="w-3.5 h-3.5" /> 
+                <span>Criar com IA</span>
+                {!isProOrBusiness && (
+                  <span className="text-[9px] px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-400 font-bold">
+                    PRO
+                  </span>
+                )}
               </button>
             </div>
           </div>
@@ -363,10 +395,9 @@ export function StudioModal({ isOpen, onClose, onSendToChat }: StudioModalProps)
           </div>
         </div>
 
-        {/* Corpo Principal */}
+        {/* Viewport */}
         <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
           
-          {/* Canvas Viewport */}
           <div className="flex-1 bg-[#05070c] relative flex items-center justify-center p-6 overflow-auto">
             {imageSrc ? (
               <div className="relative max-w-full max-h-full flex items-center justify-center">
@@ -388,7 +419,7 @@ export function StudioModal({ isOpen, onClose, onSendToChat }: StudioModalProps)
                   <div className="absolute inset-0 bg-black/60 backdrop-blur-sm rounded-lg flex flex-col items-center justify-center gap-3 text-white">
                     <Loader2 className="w-8 h-8 animate-spin text-emerald-400" />
                     <span className="text-xs font-medium tracking-wide">
-                      {isRemovingBg ? "Recortando fundo neural..." : "Processando geração com IA..."}
+                      {isRemovingBg ? "Recortando fundo neural..." : "Processando geração com Imagen 3..."}
                     </span>
                   </div>
                 )}
@@ -410,7 +441,7 @@ export function StudioModal({ isOpen, onClose, onSendToChat }: StudioModalProps)
                   <Upload className="w-7 h-7" />
                 </div>
                 <h3 className="text-sm font-medium text-zinc-200 mb-1">Nenhuma imagem carregada</h3>
-                <p className="text-xs text-zinc-500 mb-5">Carregue um arquivo ou gere uma nova imagem com IA</p>
+                <p className="text-xs text-zinc-500 mb-5">Carregue um arquivo ou crie uma imagem exclusiva com IA</p>
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => fileInputRef.current?.click()}
@@ -441,14 +472,20 @@ export function StudioModal({ isOpen, onClose, onSendToChat }: StudioModalProps)
           <div className="w-full lg:w-88 bg-[#0a0f1d] border-t lg:border-t-0 lg:border-l border-white/10 p-5 flex flex-col gap-5 overflow-y-auto">
             
             {activeTab === "generate" ? (
-              /* Aba: Geração do Zero com IA */
               <div className="space-y-4">
                 <div>
-                  <span className="text-xs font-semibold text-emerald-400 uppercase tracking-wider block mb-1">
-                    Criar Imagem do Zero
-                  </span>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-xs font-semibold text-emerald-400 uppercase tracking-wider block">
+                      Criar Imagem do Zero
+                    </span>
+                    {!isProOrBusiness && (
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 font-bold flex items-center gap-1">
+                        <Lock className="w-3 h-3" /> PRO
+                      </span>
+                    )}
+                  </div>
                   <p className="text-[11px] text-zinc-400 mb-3">
-                    Descreva o que deseja e o modelo gerará a imagem para o canvas.
+                    Descreva o cenário ou produto e o modelo Imagen 3 criará a arte em alta definição.
                   </p>
                   <textarea
                     rows={4}
@@ -466,26 +503,39 @@ export function StudioModal({ isOpen, onClose, onSendToChat }: StudioModalProps)
                 >
                   {isGenerating ? (
                     <Loader2 className="w-4 h-4 animate-spin text-zinc-950" />
+                  ) : !isProOrBusiness ? (
+                    <>
+                      <Crown className="w-4 h-4 text-zinc-950" />
+                      <span>Desbloquear com Plano PRO</span>
+                    </>
                   ) : (
-                    <Wand2 className="w-4 h-4" />
+                    <>
+                      <Wand2 className="w-4 h-4" />
+                      <span>Gerar Imagem no Estúdio</span>
+                    </>
                   )}
-                  <span>Gerar Imagem no Estúdio</span>
                 </button>
               </div>
             ) : (
-              /* Aba: Edição, Aprimoramento e Ajustes */
               <>
-                {/* Melhorar com IA / Upscale */}
+                {/* Aprimorar com IA */}
                 {imageSrc && (
                   <div className="p-3 rounded-xl bg-white/[0.02] border border-white/5 space-y-2.5">
-                    <span className="text-xs font-semibold text-zinc-200 flex items-center gap-1.5">
-                      <Wand2 className="w-3.5 h-3.5 text-emerald-400" /> Aprimorar Imagem com IA
-                    </span>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-semibold text-zinc-200 flex items-center gap-1.5">
+                        <Wand2 className="w-3.5 h-3.5 text-emerald-400" /> Aprimorar Imagem com IA
+                      </span>
+                      {!isProOrBusiness && (
+                        <span className="text-[10px] px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-400 font-bold flex items-center gap-1">
+                          <Lock className="w-3 h-3" /> PRO
+                        </span>
+                      )}
+                    </div>
                     <input
                       type="text"
                       value={enhancePrompt}
                       onChange={(e) => setEnhancePrompt(e.target.value)}
-                      placeholder="Instrução opcional (ex: mais nitidez, cores quentes)..."
+                      placeholder="Instrução opcional (ex: mais nitidez, luz quente)..."
                       className="w-full px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-xs text-zinc-200 placeholder-zinc-500 outline-none"
                     />
                     <button
@@ -493,13 +543,24 @@ export function StudioModal({ isOpen, onClose, onSendToChat }: StudioModalProps)
                       disabled={isGenerating}
                       className="w-full py-2 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/30 text-xs text-emerald-300 font-medium flex items-center justify-center gap-1.5 transition-all disabled:opacity-40"
                     >
-                      {isGenerating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-                      <span>Aprimorar Detalhes & Luz</span>
+                      {isGenerating ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : !isProOrBusiness ? (
+                        <>
+                          <Crown className="w-3.5 h-3.5" />
+                          <span>Desbloquear Aprimoramento PRO</span>
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="w-3.5 h-3.5" />
+                          <span>Aprimorar Detalhes & Luz</span>
+                        </>
+                      )}
                     </button>
                   </div>
                 )}
 
-                {/* Recorte Inteligente */}
+                {/* Recorte Inteligente (Free) */}
                 <div>
                   <span className="text-xs font-semibold text-emerald-400 uppercase tracking-wider block mb-2 flex items-center gap-1.5">
                     <Scissors className="w-3.5 h-3.5" /> Recorte de Fundo
@@ -514,7 +575,7 @@ export function StudioModal({ isOpen, onClose, onSendToChat }: StudioModalProps)
                   </button>
                 </div>
 
-                {/* Cenários & Fundo */}
+                {/* Cenários de Fundo */}
                 <div>
                   <span className="text-xs font-semibold text-zinc-300 uppercase tracking-wider block mb-2 flex items-center gap-1.5">
                     <Palette className="w-3.5 h-3.5 text-zinc-400" /> Cenário de Fundo

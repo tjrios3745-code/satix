@@ -11,7 +11,9 @@ import {
   ChevronDown,
   Loader2,
   Mic,
-  MicOff
+  MicOff,
+  Lock,
+  Crown
 } from "lucide-react";
 
 export interface FileAttachment {
@@ -27,18 +29,16 @@ export interface ChatBoxProps {
   disabled?: boolean;
   selectedModel?: string;
   onSelectModel?: (modelId: string) => void;
+  userTier?: string;
+  onRequireUpgrade?: () => void;
 }
 
 const AVAILABLE_MODELS = [
-  { id: "gemini-2.5-flash", name: "Flash", desc: "Rápido e balanceado" },
-  { id: "gemini-2.5-flash-lite", name: "Flash Lite", desc: "Ultra veloz" },
-  { id: "gemini-2.5-pro", name: "Pro", desc: "Raciocínio complexo" },
+  { id: "gemini-2.5-flash", name: "Flash", desc: "Rápido e balanceado", isPro: false },
+  { id: "gemini-2.5-flash-lite", name: "Flash Lite", desc: "Ultra veloz", isPro: false },
+  { id: "gemini-2.5-pro", name: "Pro", desc: "Raciocínio complexo", isPro: true },
 ];
 
-/**
- * Utilitário para redimensionar e comprimir imagens antes do envio,
- * garantindo payload leve para contornar o limite de 4.5 MB da Vercel.
- */
 async function processFile(
   file: File, 
   maxWidth = 1600, 
@@ -119,7 +119,9 @@ export function ChatBox({
   isLoading, 
   disabled = false,
   selectedModel: controlledModel,
-  onSelectModel 
+  onSelectModel,
+  userTier = "free",
+  onRequireUpgrade
 }: ChatBoxProps) {
   const [input, setInput] = useState("");
   const [attachment, setAttachment] = useState<FileAttachment | null>(null);
@@ -133,13 +135,20 @@ export function ChatBox({
   const dropdownRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<any>(null);
 
+  const isProOrBusiness = userTier === "pro" || userTier === "business";
   const activeModel = controlledModel || internalModel;
 
-  const handleModelSelect = (id: string) => {
+  const handleModelSelect = (modelObj: (typeof AVAILABLE_MODELS)[0]) => {
+    if (modelObj.isPro && !isProOrBusiness) {
+      setIsModelDropdownOpen(false);
+      onRequireUpgrade?.();
+      return;
+    }
+
     if (onSelectModel) {
-      onSelectModel(id);
+      onSelectModel(modelObj.id);
     } else {
-      setInternalModel(id);
+      setInternalModel(modelObj.id);
     }
     setIsModelDropdownOpen(false);
   };
@@ -161,7 +170,6 @@ export function ChatBox({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  // Cleanup do reconhecimento de voz caso o componente seja desmontado
   useEffect(() => {
     return () => {
       if (recognitionRef.current) {
@@ -209,7 +217,7 @@ export function ChatBox({
       };
 
       recognition.onerror = (event: any) => {
-        console.error("Erro no reconhecimento de voz:", event.error);
+        console.error("Erro no microfone:", event.error);
         setIsListening(false);
       };
 
@@ -335,7 +343,6 @@ export function ChatBox({
               className="hidden"
             />
 
-            {/* Anexar Arquivo */}
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
@@ -350,7 +357,6 @@ export function ChatBox({
               )}
             </button>
 
-            {/* Botão de Voz / Gravação */}
             <button
               type="button"
               onClick={toggleVoiceRecording}
@@ -369,7 +375,7 @@ export function ChatBox({
               )}
             </button>
 
-            {/* Seletor de Modelo */}
+            {/* Dropdown de Modelos com travas visuais */}
             <div className="relative" ref={dropdownRef}>
               <button
                 type="button"
@@ -379,31 +385,53 @@ export function ChatBox({
               >
                 <Sparkles className="w-3 h-3 text-emerald-400" />
                 <span>{currentModelObj.name}</span>
+                {currentModelObj.isPro && (
+                  <span className="text-[9px] px-1 py-0.2 rounded bg-emerald-500/20 text-emerald-400 font-semibold">
+                    PRO
+                  </span>
+                )}
                 <ChevronDown className="w-3 h-3 text-zinc-500" />
               </button>
 
               {isModelDropdownOpen && (
-                <div className="absolute bottom-full left-0 mb-2 w-48 rounded-xl bg-[#090d16] border border-white/10 p-1.5 shadow-2xl z-30 animate-in fade-in zoom-in-95">
-                  {AVAILABLE_MODELS.map((model) => (
-                    <button
-                      key={model.id}
-                      type="button"
-                      onClick={() => handleModelSelect(model.id)}
-                      className="w-full flex items-center justify-between p-2 rounded-lg text-left hover:bg-white/5 transition-colors"
-                    >
-                      <div>
-                        <div className="text-xs font-medium text-zinc-200">{model.name}</div>
-                        <div className="text-[10px] text-zinc-500">{model.desc}</div>
-                      </div>
-                      {activeModel === model.id && <Check className="w-3.5 h-3.5 text-emerald-400" />}
-                    </button>
-                  ))}
+                <div className="absolute bottom-full left-0 mb-2 w-52 rounded-xl bg-[#090d16] border border-white/10 p-1.5 shadow-2xl z-30 animate-in fade-in zoom-in-95">
+                  {AVAILABLE_MODELS.map((model) => {
+                    const isLocked = model.isPro && !isProOrBusiness;
+
+                    return (
+                      <button
+                        key={model.id}
+                        type="button"
+                        onClick={() => handleModelSelect(model)}
+                        className={`w-full flex items-center justify-between p-2 rounded-lg text-left transition-colors ${
+                          isLocked ? "opacity-75 hover:bg-emerald-500/5" : "hover:bg-white/5"
+                        }`}
+                      >
+                        <div>
+                          <div className="text-xs font-medium text-zinc-200 flex items-center gap-1.5">
+                            <span>{model.name}</span>
+                            {model.isPro && (
+                              <span className="text-[9px] px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-400 font-bold">
+                                PRO
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[10px] text-zinc-500">{model.desc}</div>
+                        </div>
+
+                        {isLocked ? (
+                          <Lock className="w-3.5 h-3.5 text-zinc-500" />
+                        ) : (
+                          activeModel === model.id && <Check className="w-3.5 h-3.5 text-emerald-400" />
+                        )}
+                      </button>
+                    );
+                  })}
                 </div>
               )}
             </div>
           </div>
 
-          {/* Botão Enviar */}
           <button
             type="button"
             onClick={() => handleSubmit()}

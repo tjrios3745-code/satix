@@ -1,154 +1,124 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
-import { NextRequest } from "next/server";
-import { supabase } from "@/lib/supabase";
+import { NextRequest, NextResponse } from "next/server";
+import { GoogleGenAI } from "@google/genai";
+import { createClient } from "@supabase/supabase-js";
 
-export const dynamic = "force-dynamic";
+const ai = new GoogleGenAI({
+  apiKey: process.env.GEMINI_API_KEY || "",
+});
 
-const BACKUP_MODELS = [
-  "gemini-3.1-flash-lite",
-  "gemini-2.5-flash-lite",
-  "gemini-3.5-flash",
-  "gemini-3.6-flash",
-];
+const supabaseAdmin = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL || "",
+  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ""
+);
+
+interface IncomingAttachment {
+  name: string;
+  type: string;
+  base64: string;
+}
+
+interface IncomingMessage {
+  role: "user" | "assistant";
+  content: string;
+}
 
 export async function POST(req: NextRequest) {
   try {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      return new Response("Chave GEMINI_API_KEY não configurada", { status: 500 });
-    }
+    const { model, messages, attachments = [], userId } = await req.json();
 
-    const { messages, model: requestedModel, attachments, agentId } = await req.json();
-    if (!messages || !Array.isArray(messages)) {
-      return new Response("Formato de mensagens inválido", { status: 400 });
-    }
+    const selectedModel = model || "gemini-2.5-flash";
 
-    // 1. Busca as instruções de memória persistidas no banco
-    const { data: memoryRows } = await supabase
-      .from("memories")
-      .select("content")
-      .order("created_at", { ascending: true });
-
-    const memoryInstructions = (memoryRows || [])
-      .map((m) => `- ${m.content}`)
-      .join("\n");
-
-    // 2. Busca o agente selecionado ou o agente ativo padrão
-    let agentPrompt = "Você é o SATIX, um assistente AI focado em eficiência e alto desempenho.";
-    if (agentId) {
-      const { data: agentData } = await supabase
-        .from("agents")
-        .select("system_prompt")
-        .eq("id", agentId)
-        .single();
-      if (agentData?.system_prompt) {
-        agentPrompt = agentData.system_prompt;
+    // Trava de segurança: Gemini 2.5 Pro é exclusivo para PRO ou BUSINESS
+    if (selectedModel.includes("pro")) {
+      if (!userId) {
+        return NextResponse.json(
+          { error: "Faça login e assine o plano PRO para utilizar o modelo Gemini 2.5 Pro." },
+          { status: 403 }
+        );
       }
-    } else {
-      const { data: defaultAgent } = await supabase
-        .from("agents")
-        .select("system_prompt")
-        .eq("is_active", true)
+
+      const { data: profile } = await supabaseAdmin
+        .from("profiles")
+        .select("tier, pro_expires_at")
+        .eq("id", userId)
         .single();
-      if (defaultAgent?.system_prompt) {
-        agentPrompt = defaultAgent.system_prompt;
+
+      const isProOrBusiness = profile?.tier === "pro" || profile?.tier === "business";
+      const isExpired = profile?.pro_expires_at && new Date(profile.pro_expires_at) < new Date();
+
+      if (!isProOrBusiness || isExpired) {
+        return NextResponse.json(
+          { error: "O modelo Gemini 2.5 Pro é exclusivo para assinantes dos planos PRO ou BUSINESS." },
+          { status: 403 }
+        );
       }
     }
 
-    // 3. Monta a System Instruction unificada
-    const fullSystemInstruction = `
-${agentPrompt}
+    // Formata o histórico
+    const formattedContents: any[] = [];
 
-${memoryInstructions ? `DIRETRIZES E PREFERÊNCIAS PERMANENTES DO USUÁRIO (MEMÓRIA):\n${memoryInstructions}` : ""}
-`.trim();
+    for (let i = 0; i < messages.length; i++) {
+      const msg: IncomingMessage = messages[i];
+      const isLast = i === messages.length - 1;
 
-    const previousMessages = messages.slice(0, -1);
-    const latestMessage = messages[messages.length - 1];
+      if (msg.role === "user") {
+        const parts: any[] = [];
 
-    const history = previousMessages.map((m: { role: string; content: string }) => ({
-      role: m.role === "assistant" ? "model" : "user",
-      parts: [{ text: m.content }],
-    }));
+        if (isLast && attachments.length > 0) {
+          for (const att of attachments as IncomingAttachment[]) {
+            if (att.base64) {
+              parts.push({
+                inlineData: {
+                  mimeType: att.type,
+                  data: att.base64,
+                },
+              });
+            }
+          }
+        }
 
-    const currentParts: any[] = [];
-    if (attachments && Array.isArray(attachments)) {
-      for (const file of attachments) {
-        if (file.base64 && file.type) {
-          currentParts.push({
-            inlineData: {
-              data: file.base64,
-              mimeType: file.type,
-            },
+        if (msg.content) {
+          parts.push({ text: msg.content });
+        }
+
+        if (parts.length > 0) {
+          formattedContents.push({
+            role: "user",
+            parts: parts,
+          });
+        }
+      } else if (msg.role === "assistant") {
+        if (msg.content) {
+          formattedContents.push({
+            role: "model",
+            parts: [{ text: msg.content }],
           });
         }
       }
     }
 
-    const textContent = latestMessage.content.trim() || "Analise os arquivos enviados.";
-    currentParts.push({ text: textContent });
+    const responseStream = await ai.models.generateContentStream({
+      model: selectedModel,
+      contents: formattedContents,
+      config: {
+        systemInstruction:
+          "Você é o SATIX, um assistente de inteligência artificial de elite, multimodal, ultra veloz, preciso e profissional. Sempre responda no idioma em que for abordado com formatação Markdown impecável.",
+      },
+    });
 
-    const genAI = new GoogleGenerativeAI(apiKey);
-
-    const targetModels = requestedModel
-      ? [requestedModel, ...BACKUP_MODELS.filter((m) => m !== requestedModel)]
-      : BACKUP_MODELS;
-
-    let activeStream: any = null;
-    let lastError: any = null;
-
-    for (const modelName of targetModels) {
-      try {
-        const model = genAI.getGenerativeModel({
-          model: modelName,
-          systemInstruction: fullSystemInstruction,
-        });
-
-        const chat = model.startChat({ history });
-        const streamResult = await chat.sendMessageStream(currentParts);
-
-        const iterator = streamResult.stream[Symbol.asyncIterator]();
-        const firstChunk = await iterator.next();
-
-        if (!firstChunk.done && firstChunk.value) {
-          activeStream = {
-            firstText: firstChunk.value.text(),
-            iterator,
-          };
-          break;
-        }
-      } catch (err: any) {
-        lastError = err;
-        console.warn(`Falha no modelo ${modelName}:`, err?.message || err);
-      }
-    }
-
-    if (!activeStream) {
-      throw lastError || new Error("Nenhum modelo respondeu a tempo.");
-    }
-
-    const encoder = new TextEncoder();
     const stream = new ReadableStream({
       async start(controller) {
+        const encoder = new TextEncoder();
         try {
-          if (activeStream.firstText) {
-            controller.enqueue(encoder.encode(activeStream.firstText));
+          for await (const chunk of responseStream) {
+            const text = chunk.text;
+            if (text) {
+              controller.enqueue(encoder.encode(text));
+            }
           }
-
-          while (true) {
-            const { done, value } = await activeStream.iterator.next();
-            if (done) break;
-
-            try {
-              const text = value.text();
-              if (text) {
-                controller.enqueue(encoder.encode(text));
-              }
-            } catch {}
-          }
-        } catch (streamErr) {
-          console.error("Erro na transmissão:", streamErr);
-        } finally {
           controller.close();
+        } catch (err) {
+          controller.error(err);
         }
       },
     });
@@ -156,12 +126,14 @@ ${memoryInstructions ? `DIRETRIZES E PREFERÊNCIAS PERMANENTES DO USUÁRIO (MEM�
     return new Response(stream, {
       headers: {
         "Content-Type": "text/plain; charset=utf-8",
-        "Cache-Control": "no-cache, no-transform",
-        "X-Accel-Buffering": "no",
+        "Transfer-Encoding": "chunked",
       },
     });
   } catch (error: any) {
     console.error("Erro na rota de chat:", error);
-    return new Response(error?.message || "Erro interno", { status: 500 });
+    return NextResponse.json(
+      { error: error?.message || "Falha interna ao comunicar com a IA." },
+      { status: 500 }
+    );
   }
 }
