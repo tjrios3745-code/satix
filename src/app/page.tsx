@@ -369,6 +369,36 @@ export default function Home() {
     }
   };
 
+  const handleCheckoutPlan = async (tier: string) => {
+    if (!user) {
+      setIsPricingOpen(false);
+      setAuthModalOpen(true);
+      return;
+    }
+
+    try {
+      const res = await fetch("/api/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: user.id,
+          userEmail: user.email,
+          tier: tier,
+        }),
+      });
+
+      const data = await res.json();
+      if (data.init_point) {
+        window.location.href = data.init_point;
+      } else {
+        alert(data.error || "Não foi possível iniciar o checkout.");
+      }
+    } catch (err) {
+      console.error("Erro no checkout:", err);
+      alert("Erro ao conectar com o gateway do Mercado Pago.");
+    }
+  };
+
   return (
     <div className="relative h-screen w-full bg-[#06070a] overflow-hidden flex flex-col">
       <div
@@ -397,9 +427,7 @@ export default function Home() {
         isOpen={isPricingOpen}
         onClose={() => setIsPricingOpen(false)}
         currentTier={userTier}
-        onSelectPlan={(tier) => {
-          alert(`Plano selecionado: ${tier.toUpperCase()}. Sistema de pagamento em configuração.`);
-        }}
+        onSelectPlan={handleCheckoutPlan}
       />
 
       <StudioModal
@@ -457,7 +485,6 @@ export default function Home() {
                 </h1>
               </div>
 
-              {/* Cards de Ações Rápidas */}
               <div className="w-full grid grid-cols-1 sm:grid-cols-2 gap-3 mb-8">
                 {QUICK_ACTIONS.map((action, idx) => {
                   const Icon = action.icon;
