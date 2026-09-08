@@ -117,12 +117,7 @@ export function StudioModal({ isOpen, onClose, onSendToChat }: StudioModalProps)
       setIsRemovingBg(true);
       const { removeBackground } = await import("@imgly/background-removal");
       
-      const blob = await removeBackground(imageSrc, {
-        progress: (key, current, total) => {
-          console.log(`Recorte de fundo: ${key} - ${Math.round((current / total) * 100)}%`);
-        },
-      });
-
+      const blob = await removeBackground(imageSrc);
       const newUrl = URL.createObjectURL(blob);
       setImageSrc(newUrl);
 
@@ -134,12 +129,13 @@ export function StudioModal({ isOpen, onClose, onSendToChat }: StudioModalProps)
       newImg.src = newUrl;
     } catch (error) {
       console.error("Falha ao remover fundo com IA:", error);
-      alert("Não foi possível recortar o fundo automaticamente desta imagem.");
+      alert("Não foi possível recortar o fundo desta imagem.");
     } finally {
       setIsRemovingBg(false);
     }
   };
 
+  // Download do arquivo mantendo resolução total
   const handleDownload = () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -150,12 +146,41 @@ export function StudioModal({ isOpen, onClose, onSendToChat }: StudioModalProps)
     link.click();
   };
 
+  // Envio otimizado para a API do Chat para evitar o erro 413 da Vercel
   const handleSendResultToChat = () => {
     const canvas = canvasRef.current;
     if (!canvas || !onSendToChat) return;
 
-    const finalDataUrl = canvas.toDataURL("image/png");
-    onSendToChat(finalDataUrl, promptPrompt.trim() || undefined);
+    const maxDimension = 1600;
+    let targetWidth = canvas.width;
+    let targetHeight = canvas.height;
+
+    if (targetWidth > targetHeight) {
+      if (targetWidth > maxDimension) {
+        targetHeight = Math.round((targetHeight * maxDimension) / targetWidth);
+        targetWidth = maxDimension;
+      }
+    } else {
+      if (targetHeight > maxDimension) {
+        targetWidth = Math.round((targetWidth * maxDimension) / targetHeight);
+        targetHeight = maxDimension;
+      }
+    }
+
+    const tempCanvas = document.createElement("canvas");
+    tempCanvas.width = targetWidth;
+    tempCanvas.height = targetHeight;
+    const tempCtx = tempCanvas.getContext("2d");
+
+    if (tempCtx) {
+      tempCtx.drawImage(canvas, 0, 0, targetWidth, targetHeight);
+      // Exporta em PNG comprimido leve preservando transparência
+      const optimizedDataUrl = tempCanvas.toDataURL("image/png");
+      onSendToChat(optimizedDataUrl, promptPrompt.trim() || undefined);
+    } else {
+      onSendToChat(canvas.toDataURL("image/png"), promptPrompt.trim() || undefined);
+    }
+
     onClose();
   };
 
@@ -223,7 +248,6 @@ export function StudioModal({ isOpen, onClose, onSendToChat }: StudioModalProps)
           <div className="flex-1 bg-[#05070c] relative flex items-center justify-center p-6 overflow-auto">
             {imageSrc ? (
               <div className="relative max-w-full max-h-full flex items-center justify-center">
-                {/* Efeito checkerboard para visualizar recortes transparentes */}
                 <div 
                   className="relative rounded-lg overflow-hidden border border-white/10 shadow-2xl"
                   style={{
@@ -281,10 +305,10 @@ export function StudioModal({ isOpen, onClose, onSendToChat }: StudioModalProps)
             />
           </div>
 
-          {/* Lado Direito: Ferramentas Inteligentes */}
+          {/* Lado Direito: Painel de Controles */}
           <div className="w-full lg:w-84 bg-[#0a0f1d] border-t lg:border-t-0 lg:border-l border-white/10 p-5 flex flex-col gap-5 overflow-y-auto">
             
-            {/* Bloco de IA Neural: Remoção de Fundo */}
+            {/* Bloco de IA: Remoção de Fundo */}
             <div>
               <span className="text-xs font-semibold text-emerald-400 uppercase tracking-wider block mb-2.5 flex items-center gap-1.5">
                 <Scissors className="w-3.5 h-3.5" /> Ações Rápidas de IA
