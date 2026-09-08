@@ -9,6 +9,7 @@ import { CodeBlock } from "@/components/chat/code-block";
 import { FeatureView, FeatureTab } from "@/components/features/feature-view";
 import { AuthModal } from "@/components/auth/auth-modal";
 import { StudioModal } from "@/components/studio/studio-modal";
+import { PricingModal } from "@/components/pricing/pricing-modal";
 import { 
   Zap, 
   User as UserIcon, 
@@ -20,7 +21,8 @@ import {
   FileEdit,
   Code2,
   Share2,
-  SearchCode
+  SearchCode,
+  Crown
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { User } from "@supabase/supabase-js";
@@ -65,8 +67,10 @@ const QUICK_ACTIONS = [
 
 export default function Home() {
   const [user, setUser] = useState<User | null>(null);
+  const [userTier, setUserTier] = useState<string>("free");
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [isStudioOpen, setIsStudioOpen] = useState(false);
+  const [isPricingOpen, setIsPricingOpen] = useState(false);
 
   const [currentTab, setCurrentTab] = useState<FeatureTab>("chat");
   const [currentChatId, setCurrentChatId] = useState<string | null>(null);
@@ -80,13 +84,40 @@ export default function Home() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const exportMenuRef = useRef<HTMLDivElement>(null);
 
+  // Busca os dados do usuário e perfil com tier
+  const fetchUserProfile = async (userId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("tier")
+        .eq("id", userId)
+        .single();
+
+      if (!error && data?.tier) {
+        setUserTier(data.tier);
+      }
+    } catch (err) {
+      console.error("Erro ao carregar perfil:", err);
+    }
+  };
+
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
-      setUser(data.user);
+      const currentUser = data.user;
+      setUser(currentUser);
+      if (currentUser) {
+        fetchUserProfile(currentUser.id);
+      }
     });
 
     const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user || null);
+      const currentUser = session?.user || null;
+      setUser(currentUser);
+      if (currentUser) {
+        fetchUserProfile(currentUser.id);
+      } else {
+        setUserTier("free");
+      }
     });
 
     return () => {
@@ -111,6 +142,7 @@ export default function Home() {
   const handleSignOut = async () => {
     await supabase.auth.signOut();
     setUser(null);
+    setUserTier("free");
     handleNewChat();
   };
 
@@ -360,6 +392,15 @@ export default function Home() {
         onSuccess={() => handleNewChat()}
       />
 
+      <PricingModal
+        isOpen={isPricingOpen}
+        onClose={() => setIsPricingOpen(false)}
+        currentTier={userTier}
+        onSelectPlan={(tier) => {
+          alert(`Plano selecionado: ${tier.toUpperCase()}. Integração de pagamento pronta para ser ativada.`);
+        }}
+      />
+
       <StudioModal
         isOpen={isStudioOpen}
         onClose={() => setIsStudioOpen(false)}
@@ -400,10 +441,17 @@ export default function Home() {
           ) : messages.length === 0 ? (
             <div className="flex-1 flex flex-col items-center justify-center px-4 -translate-y-4 w-full max-w-4xl mx-auto">
               <div className="w-full text-center mb-8">
-                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs mb-4">
-                  <Sparkles className="w-3.5 h-3.5" />
-                  <span>Pronto para acelerar seu trabalho</span>
+                {/* Badge de Upgrade para o Pro */}
+                <div className="flex items-center justify-center gap-2 mb-4">
+                  <button
+                    onClick={() => setIsPricingOpen(true)}
+                    className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 text-emerald-400 text-xs transition-colors cursor-pointer group"
+                  >
+                    <Crown className="w-3.5 h-3.5 group-hover:scale-110 transition-transform" />
+                    <span>Plano {userTier.toUpperCase()} &bull; Upgrade para PRO</span>
+                  </button>
                 </div>
+
                 <h1 className="text-3xl sm:text-5xl font-normal tracking-tight text-zinc-100 leading-tight">
                   Peça o que quiser ao SATIX
                 </h1>
@@ -446,7 +494,15 @@ export default function Home() {
             </div>
           ) : (
             <div className="flex-1 flex flex-col h-full overflow-hidden">
-              <div className="flex items-center justify-end px-6 py-2 border-b border-white/5 bg-[#06070a]/40 backdrop-blur-md">
+              <div className="flex items-center justify-between px-6 py-2 border-b border-white/5 bg-[#06070a]/40 backdrop-blur-md">
+                <button
+                  onClick={() => setIsPricingOpen(true)}
+                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 text-emerald-400 text-xs transition-colors"
+                >
+                  <Crown className="w-3.5 h-3.5" />
+                  <span>Plano {userTier.toUpperCase()}</span>
+                </button>
+
                 <div className="relative" ref={exportMenuRef}>
                   <button
                     onClick={() => setShowExportMenu((prev) => !prev)}
