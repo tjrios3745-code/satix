@@ -1,69 +1,517 @@
-import Image from "next/image";
+"use client";
+
+import { useState, useRef, useEffect } from "react";
+import ReactMarkdown from "react-markdown";
+import { Header } from "@/components/layout/header";
+import { Sidebar } from "@/components/layout/sidebar";
+import { ChatBox, FileAttachment } from "@/components/chat/chat-box";
+import { CodeBlock } from "@/components/chat/code-block";
+import { FeatureView, FeatureTab } from "@/components/features/feature-view";
+import { AuthModal } from "@/components/auth/auth-modal";
+import { Zap, User as UserIcon, Sparkles, Download, FileText, FileCode, Check } from "lucide-react";
+import { supabase } from "@/lib/supabase";
+import { User } from "@supabase/supabase-js";
+
+interface Message {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  attachments?: {
+    name: string;
+    type: string;
+    previewUrl?: string;
+  }[];
+}
 
 export default function Home() {
+  const [user, setUser] = useState<User | null>(null);
+  const [authModalOpen, setAuthModalOpen] = useState(false);
+
+  const [currentTab, setCurrentTab] = useState<FeatureTab>("chat");
+  const [currentChatId, setCurrentChatId] = useState<string | null>(null);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [selectedModel, setSelectedModel] = useState<string>("gemini-3.1-flash-lite");
+  const [activeAgentId, setActiveAgentId] = useState<string | null>(null);
+
+  const [showExportMenu, setShowExportMenu] = useState(false);
+  const [exportFeedback, setExportFeedback] = useState<string | null>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const exportMenuRef = useRef<HTMLDivElement>(null);
+
+  // Monitora a sessão de autenticação
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => {
+      setUser(data.user);
+    });
+
+    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user || null);
+    });
+
+    return () => {
+      authListener.subscription.unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (exportMenuRef.current && !exportMenuRef.current.contains(event.target as Node)) {
+        setShowExportMenu(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const handleSignOut = async () => {
+    await supabase.auth.signOut();
+    setUser(null);
+    handleNewChat();
+  };
+
+  const handleSelectChat = async (chatId: string) => {
+    setCurrentTab("chat");
+    if (currentChatId === chatId) return;
+
+    setCurrentChatId(chatId);
+    setIsLoading(true);
+
+    try {
+      const { data, error } = await supabase
+        .from("messages")
+        .select("id, role, content")
+        .eq("chat_id", chatId)
+        .order("created_at", { ascending: true });
+
+      if (error) {
+        console.error("Erro ao carregar mensagens:", error);
+      } else if (data) {
+        setMessages(
+          data.map((item) => ({
+            id: item.id,
+            role: item.role as "user" | "assistant",
+            content: item.content,
+          }))
+        );
+      }
+    } catch (err) {
+      console.error("Erro inesperado:", err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleNewChat = () => {
+    setCurrentTab("chat");
+    setCurrentChatId(null);
+    setMessages([]);
+  };
+
+  const handleExport = (format: "md" | "txt") => {
+    if (messages.length === 0) return;
+
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    let fileContent = "";
+    let fileName = `chat-satix-${timestamp}.${format}`;
+    let mimeType = "text/plain;charset=utf-8";
+
+    if (format === "md") {
+      fileContent = `# Conversa SATIX - ${new Date().toLocaleString("pt-BR")}\n\n---\n\n`;
+      fileContent += messages
+        .map((m) => {
+          const author = m.role === "user" ? "### 👤 Usuário" : "### ⚡ SATIX";
+          return `${author}\n\n${m.content}\n\n---`;
+        })
+        .join("\n\n");
+      mimeType = "text/markdown;charset=utf-8";
+    } else {
+      fileContent = `CONVERSA SATIX - ${new Date().toLocaleString("pt-BR")}\n\n`;
+      fileContent += messages
+        .map((m) => {
+          const author = m.role === "user" ? "[USUÁRIO]" : "[SATIX]";
+          return `${author}\n${m.content}\n\n${"-".repeat(40)}`;
+        })
+        .join("\n\n");
+    }
+
+    const blob = new Blob([fileContent], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+
+    setShowExportMenu(false);
+    setExportFeedback(`Exportado como .${format}!`);
+    setTimeout(() => setExportFeedback(null), 2500);
+  };
+
+  const handleSendMessage = async (
+    text: string,
+    modelId: string,
+    attachments: FileAttachment[] = []
+  ) => {
+    let chatId = currentChatId;
+
+    const userMessage: Message = {
+      id: crypto.randomUUID(),
+      role: "user",
+      content: text,
+      attachments: attachments.map((a) => ({
+        name: a.name,
+        type: a.type,
+        previewUrl: a.previewUrl,
+      })),
+    };
+
+    const newMessages = [...messages, userMessage];
+    setMessages(newMessages);
+    setIsLoading(true);
+
+    const assistantId = crypto.randomUUID();
+    setMessages((prev) => [
+      ...prev,
+      { id: assistantId, role: "assistant", content: "" },
+    ]);
+
+    const persistChatPromise = (async () => {
+      try {
+        let activeId = chatId;
+        if (!activeId) {
+          const titleSummary = text
+            ? text.slice(0, 30) + (text.length > 30 ? "..." : "")
+            : `Anexo: ${attachments[0]?.name || "Arquivo"}`;
+
+          const { data: newChat, error: chatError } = await supabase
+            .from("chats")
+            .insert({
+              title: titleSummary,
+              user_id: user?.id || null,
+            })
+            .select("id")
+            .single();
+
+          if (chatError) {
+            console.error("Erro ao criar chat no Supabase:", chatError);
+          } else if (newChat) {
+            activeId = newChat.id;
+            setCurrentChatId(newChat.id);
+          }
+        }
+
+        if (activeId) {
+          const textToSave = text || `[Enviou ${attachments.length} anexo(s)]`;
+          await supabase.from("messages").insert({
+            chat_id: activeId,
+            role: "user",
+            content: textToSave,
+          });
+        }
+        return activeId;
+      } catch (e) {
+        console.error("Erro na persistência do chat:", e);
+        return chatId;
+      }
+    })();
+
+    try {
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: modelId,
+          agentId: activeAgentId,
+          messages: newMessages.map((m) => ({
+            role: m.role,
+            content: m.content,
+          })),
+          attachments: attachments.map((a) => ({
+            name: a.name,
+            type: a.type,
+            base64: a.base64,
+          })),
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(errorText || "Erro retornado pela API");
+      }
+
+      if (!response.body) {
+        throw new Error("Resposta sem stream de dados");
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let streamText = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value, { stream: true });
+        streamText += chunk;
+
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === assistantId ? { ...m, content: streamText } : m
+          )
+        );
+      }
+
+      const resolvedChatId = await persistChatPromise;
+      if (resolvedChatId && streamText) {
+        await supabase.from("messages").insert({
+          chat_id: resolvedChatId,
+          role: "assistant",
+          content: streamText,
+        });
+      }
+    } catch (err: any) {
+      console.error("Erro ao processar stream:", err);
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === assistantId
+            ? { ...m, content: `Erro: ${err?.message || "Falha na conexão com a API."}` }
+            : m
+        )
+      );
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
+    <div className="relative h-screen w-full bg-[#06070a] overflow-hidden flex flex-col">
+      <div
+        className="pointer-events-none absolute inset-0 z-0"
+        style={{
+          background:
+            "radial-gradient(ellipse 90% 70% at 50% 50%, #101c3d 0%, #0c1429 35%, #070a14 70%, #050608 100%)",
+        }}
+      />
+
+      <Header
+        user={user}
+        onOpenAuth={() => setAuthModalOpen(true)}
+        onSignOut={handleSignOut}
+      />
+
+      <AuthModal
+        isOpen={authModalOpen}
+        onClose={() => setAuthModalOpen(false)}
+        onSuccess={() => handleNewChat()}
+      />
+
+      <div className="relative z-10 flex flex-1 overflow-hidden">
+        <Sidebar
+          currentChatId={currentChatId}
+          currentTab={currentTab}
+          onSelectTab={setCurrentTab}
+          onSelectChat={handleSelectChat}
+          onNewChat={handleNewChat}
         />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
+
+        <main className="flex-1 flex flex-col relative w-full h-full">
+          {currentTab !== "chat" ? (
+            <FeatureView
+              currentTab={currentTab}
+              onBackToChat={() => setCurrentTab("chat")}
+              activeAgentId={activeAgentId}
+              onSelectActiveAgent={setActiveAgentId}
             />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
+          ) : messages.length === 0 ? (
+            <div className="flex-1 flex flex-col items-center justify-center px-8 -translate-y-8 w-full">
+              <div className="w-full text-center mb-10">
+                <h1 className="text-4xl sm:text-5xl lg:text-[52px] font-normal tracking-tight text-zinc-100 leading-tight">
+                  Peça o que quiser ao SATIX
+                </h1>
+              </div>
+              <div className="w-full flex justify-center">
+                <ChatBox
+                  onSendMessage={handleSendMessage}
+                  isLoading={isLoading}
+                  selectedModel={selectedModel}
+                  onSelectModel={setSelectedModel}
+                />
+              </div>
+            </div>
+          ) : (
+            <div className="flex-1 flex flex-col h-full overflow-hidden">
+              <div className="flex items-center justify-end px-6 py-2 border-b border-white/5 bg-[#06070a]/40 backdrop-blur-md">
+                <div className="relative" ref={exportMenuRef}>
+                  <button
+                    onClick={() => setShowExportMenu((prev) => !prev)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-zinc-300 hover:text-white border border-white/10 text-xs transition-colors"
+                    title="Exportar conversa"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Exportar</span>
+                  </button>
+
+                  {showExportMenu && (
+                    <div className="absolute right-0 mt-2 w-44 rounded-xl bg-[#0c101d] border border-white/10 shadow-2xl p-1 z-50 animate-in fade-in zoom-in-95 duration-150">
+                      <button
+                        onClick={() => handleExport("md")}
+                        className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-zinc-300 hover:text-white hover:bg-white/10 rounded-lg transition-colors"
+                      >
+                        <FileCode className="w-4 h-4 text-emerald-400" />
+                        <span>Markdown (.md)</span>
+                      </button>
+                      <button
+                        onClick={() => handleExport("txt")}
+                        className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-zinc-300 hover:text-white hover:bg-white/10 rounded-lg transition-colors"
+                      >
+                        <FileText className="w-4 h-4 text-blue-400" />
+                        <span>Texto puro (.txt)</span>
+                      </button>
+                    </div>
+                  )}
+
+                  {exportFeedback && (
+                    <div className="absolute right-0 top-full mt-2 flex items-center gap-1.5 px-3 py-1 rounded-md bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 text-xs shadow-lg whitespace-nowrap z-50 animate-in fade-in">
+                      <Check className="w-3.5 h-3.5" />
+                      <span>{exportFeedback}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex-1 overflow-y-auto px-6 py-8 space-y-6 max-w-4xl w-full mx-auto">
+                {messages.map((m) => (
+                  <div
+                    key={m.id}
+                    className={`flex items-start gap-4 ${
+                      m.role === "user" ? "justify-end" : "justify-start"
+                    }`}
+                  >
+                    {m.role === "assistant" && (
+                      <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center flex-shrink-0 mt-1 shadow-[0_0_12px_rgba(16,185,129,0.15)]">
+                        <Zap className="w-4 h-4 fill-emerald-400" />
+                      </div>
+                    )}
+
+                    <div
+                      className={`max-w-[85%] rounded-2xl px-4 py-3 text-[15px] leading-relaxed ${
+                        m.role === "user"
+                          ? "bg-white/10 text-zinc-100 border border-white/10"
+                          : "bg-transparent text-zinc-200 w-full"
+                      }`}
+                    >
+                      {m.role === "user" && m.attachments && m.attachments.length > 0 && (
+                        <div className="flex flex-wrap gap-2 mb-2">
+                          {m.attachments.map((att, attIdx) => (
+                            <div key={attIdx} className="overflow-hidden rounded-lg">
+                              {att.previewUrl ? (
+                                <img
+                                  src={att.previewUrl}
+                                  alt={att.name}
+                                  className="max-h-48 max-w-xs object-cover rounded-lg border border-white/10"
+                                />
+                              ) : (
+                                <div className="flex items-center gap-2 px-3 py-1.5 bg-white/5 border border-white/10 rounded-lg text-xs text-zinc-300">
+                                  <FileText className="w-4 h-4 text-emerald-400" />
+                                  <span className="truncate max-w-[160px]">{att.name}</span>
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {m.role === "assistant" ? (
+                        m.content.length === 0 ? (
+                          <div className="flex items-center gap-3 py-1 text-zinc-400">
+                            <div className="relative flex items-center justify-center">
+                              <Sparkles className="w-4 h-4 text-emerald-400 animate-spin [animation-duration:3s]" />
+                              <div className="absolute inset-0 rounded-full bg-emerald-500/20 animate-ping [animation-duration:2s]" />
+                            </div>
+                            <div className="flex items-center gap-1.5 text-xs text-zinc-400 font-medium">
+                              <span>Pensando</span>
+                              <span className="inline-flex gap-0.5">
+                                <span className="w-1 h-1 rounded-full bg-emerald-400 animate-bounce [animation-delay:0ms]" />
+                                <span className="w-1 h-1 rounded-full bg-emerald-400 animate-bounce [animation-delay:150ms]" />
+                                <span className="w-1 h-1 rounded-full bg-emerald-400 animate-bounce [animation-delay:300ms]" />
+                              </span>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="space-y-3 prose-invert [&>h1]:text-xl [&>h1]:font-bold [&>h1]:text-zinc-100 [&>h2]:text-lg [&>h2]:font-semibold [&>h2]:text-zinc-100 [&>h3]:text-base [&>h3]:font-semibold [&>h3]:text-zinc-200 [&>p]:leading-relaxed [&>ul]:list-disc [&>ul]:pl-5 [&>ol]:list-decimal [&>ol]:pl-5 [&>hr]:border-white/10 [&>hr]:my-4">
+                            <ReactMarkdown
+                              components={{
+                                code({ node, inline, className, children, ...props }: any) {
+                                  const match = /language-(\w+)/.exec(className || "");
+                                  const codeContent = String(children).replace(/\n$/, "");
+
+                                  if (!inline && match) {
+                                    return (
+                                      <CodeBlock
+                                        language={match[1]}
+                                        value={codeContent}
+                                      />
+                                    );
+                                  }
+
+                                  if (!inline && codeContent.includes("\n")) {
+                                    return (
+                                      <CodeBlock
+                                        language=""
+                                        value={codeContent}
+                                      />
+                                    );
+                                  }
+
+                                  return (
+                                    <code
+                                      className="bg-white/10 text-emerald-300 font-mono text-xs px-1.5 py-0.5 rounded"
+                                      {...props}
+                                    >
+                                      {children}
+                                    </code>
+                                  );
+                                },
+                              }}
+                            >
+                              {m.content}
+                            </ReactMarkdown>
+                          </div>
+                        )
+                      ) : (
+                        m.content && <p className="whitespace-pre-wrap">{m.content}</p>
+                      )}
+                    </div>
+
+                    {m.role === "user" && (
+                      <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center flex-shrink-0 mt-1">
+                        <UserIcon className="w-4 h-4 text-zinc-300" />
+                      </div>
+                    )}
+                  </div>
+                ))}
+                <div ref={messagesEndRef} />
+              </div>
+
+              <div className="p-4 bg-gradient-to-t from-[#06070a] via-[#06070a]/90 to-transparent flex justify-center">
+                <ChatBox
+                  onSendMessage={handleSendMessage}
+                  isLoading={isLoading}
+                  selectedModel={selectedModel}
+                  onSelectModel={setSelectedModel}
+                />
+              </div>
+            </div>
+          )}
+        </main>
+      </div>
     </div>
   );
 }
