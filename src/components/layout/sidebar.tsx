@@ -9,7 +9,8 @@ import {
   Library,
   BrainCircuit,
   Settings,
-  Plus
+  Plus,
+  Trash2
 } from "lucide-react";
 import { FeatureTab } from "@/components/features/feature-view";
 import { supabase } from "@/lib/supabase";
@@ -39,22 +40,26 @@ export function Sidebar({
   const [chats, setChats] = useState<ChatItem[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
 
-  useEffect(() => {
-    const fetchChats = async () => {
-      try {
-        const { data, error } = await supabase
-          .from("chats")
-          .select("id, title")
-          .order("created_at", { ascending: false });
+  const fetchChats = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
 
-        if (!error && data) {
-          setChats(data);
-        }
-      } catch (err) {
-        console.error("Erro ao carregar histórico de chats:", err);
+      const { data, error } = await supabase
+        .from("chats")
+        .select("id, title")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false });
+
+      if (!error && data) {
+        setChats(data);
       }
-    };
+    } catch (err) {
+      console.error("Erro ao carregar histórico de chats:", err);
+    }
+  };
 
+  useEffect(() => {
     fetchChats();
 
     const channel = supabase
@@ -72,6 +77,35 @@ export function Sidebar({
       supabase.removeChannel(channel);
     };
   }, []);
+
+  const handleDeleteChat = async (chatId: string, e: React.MouseEvent) => {
+    e.stopPropagation(); // Evita abrir o chat ao clicar no botão de excluir
+
+    if (!confirm("Deseja realmente excluir esta conversa?")) return;
+
+    try {
+      const { error } = await supabase
+        .from("chats")
+        .delete()
+        .eq("id", chatId);
+
+      if (error) {
+        console.error("Erro ao excluir chat:", error.message);
+        alert("Não foi possível excluir a conversa.");
+        return;
+      }
+
+      // Remove localmente da lista instantaneamente
+      setChats((prev) => prev.filter((c) => c.id !== chatId));
+
+      // Se a conversa excluída era a ativa, volta para o estado inicial/nova conversa
+      if (currentChatId === chatId) {
+        onNewChat();
+      }
+    } catch (err) {
+      console.error("Erro inesperado ao excluir chat:", err);
+    }
+  };
 
   const filteredChats = chats.filter((c) =>
     c.title.toLowerCase().includes(searchQuery.toLowerCase())
@@ -163,7 +197,7 @@ export function Sidebar({
         </button>
       </div>
 
-      {/* Lista de Conversas do Supabase (Ocupa o restante da tela) */}
+      {/* Lista de Conversas do Supabase com Botão de Excluir */}
       <div className="flex-1 overflow-y-auto px-2 pt-2 space-y-0.5">
         <div className="px-2 py-1 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">
           Conversas
@@ -175,18 +209,30 @@ export function Sidebar({
           </div>
         ) : (
           filteredChats.map((chat) => (
-            <button
+            <div
               key={chat.id}
               onClick={() => onSelectChat(chat.id)}
-              className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs transition-colors text-left truncate ${
+              className={`group relative w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-xs transition-colors cursor-pointer ${
                 currentTab === "chat" && currentChatId === chat.id
                   ? "bg-white/10 text-emerald-300 font-medium"
                   : "text-zinc-400 hover:text-zinc-200 hover:bg-white/5"
               }`}
             >
-              <MessageSquare className="w-3.5 h-3.5 flex-shrink-0" />
-              <span className="truncate">{chat.title}</span>
-            </button>
+              <div className="flex items-center gap-2 truncate pr-6">
+                <MessageSquare className="w-3.5 h-3.5 flex-shrink-0" />
+                <span className="truncate">{chat.title}</span>
+              </div>
+
+              {/* Botão de Lixeira que aparece ao passar o mouse */}
+              <button
+                type="button"
+                onClick={(e) => handleDeleteChat(chat.id, e)}
+                title="Excluir conversa"
+                className="absolute right-2 opacity-0 group-hover:opacity-100 p-1 text-zinc-400 hover:text-red-400 transition-opacity rounded"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </div>
           ))
         )}
       </div>
