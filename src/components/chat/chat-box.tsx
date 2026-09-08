@@ -12,8 +12,7 @@ import {
   Loader2,
   Mic,
   MicOff,
-  Lock,
-  Crown
+  Lock
 } from "lucide-react";
 
 export interface FileAttachment {
@@ -34,9 +33,9 @@ export interface ChatBoxProps {
 }
 
 const AVAILABLE_MODELS = [
-  { id: "gemini-2.5-flash", name: "Flash", desc: "Rápido e balanceado", isPro: false },
-  { id: "gemini-2.5-flash-lite", name: "Flash Lite", desc: "Ultra veloz", isPro: false },
-  { id: "gemini-2.5-pro", name: "Pro", desc: "Raciocínio complexo", isPro: true },
+  { id: "gemini-3.5-flash", name: "Flash", desc: "Rápido e balanceado", isPro: false },
+  { id: "gemini-3.5-flash-lite", name: "Flash Lite", desc: "Ultra veloz", isPro: false },
+  { id: "gemini-3.5-pro", name: "Pro", desc: "Raciocínio complexo", isPro: true },
 ];
 
 async function processFile(
@@ -375,7 +374,7 @@ export function ChatBox({
               )}
             </button>
 
-            {/* Dropdown de Modelos com travas visuais */}
+            {/* Dropdown de Modelos */}
             <div className="relative" ref={dropdownRef}>
               <button
                 type="button"

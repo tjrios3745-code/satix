@@ -26,13 +26,13 @@ export async function POST(req: NextRequest) {
   try {
     const { model, messages, attachments = [], userId } = await req.json();
 
-    const selectedModel = model || "gemini-2.5-flash";
+    const selectedModel = model || "gemini-3.5-flash";
 
-    // Trava de segurança: Gemini 2.5 Pro é exclusivo para PRO ou BUSINESS
+    // Trava de segurança: Modelos Pro exigem assinatura ativa
     if (selectedModel.includes("pro")) {
       if (!userId) {
         return NextResponse.json(
-          { error: "Faça login e assine o plano PRO para utilizar o modelo Gemini 2.5 Pro." },
+          { error: "Faça login e assine o plano PRO para utilizar os modelos Pro." },
           { status: 403 }
         );
       }
@@ -48,13 +48,12 @@ export async function POST(req: NextRequest) {
 
       if (!isProOrBusiness || isExpired) {
         return NextResponse.json(
-          { error: "O modelo Gemini 2.5 Pro é exclusivo para assinantes dos planos PRO ou BUSINESS." },
+          { error: "Este modelo avançado é exclusivo para assinantes dos planos PRO ou BUSINESS." },
           { status: 403 }
         );
       }
     }
 
-    // Formata o histórico
     const formattedContents: any[] = [];
 
     for (let i = 0; i < messages.length; i++) {
