@@ -26,7 +26,8 @@ export async function POST(req: NextRequest) {
   try {
     const { model, messages, attachments = [], userId } = await req.json();
 
-    const selectedModel = model || "gemini-3.5-flash";
+    // Modelo padrão estável atualizado
+    const selectedModel = model || "gemini-2.5-flash";
 
     // Trava de segurança: Modelos Pro exigem assinatura ativa
     if (selectedModel.includes("pro")) {
