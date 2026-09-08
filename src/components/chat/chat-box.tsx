@@ -12,20 +12,20 @@ import {
   Loader2 
 } from "lucide-react";
 
-// Tipagem compatível com src/app/page.tsx
+// Definição exata exigida por src/app/page.tsx
 export interface FileAttachment {
   name: string;
-  mimeType: string;
-  data: string; // base64 sem prefixo
+  type: string;        // mimeType (ex: "image/jpeg")
+  previewUrl?: string; // URL para exibição visual
+  base64: string;      // Base64 sem o prefixo data:image/...
 }
 
-// Alias para manter compatibilidade reversa caso algum outro arquivo use AttachmentData
-export type AttachmentData = FileAttachment;
-
-interface ChatBoxProps {
+export interface ChatBoxProps {
   onSendMessage: (text: string, modelId: string, attachments?: FileAttachment[]) => Promise<void> | void;
   isLoading: boolean;
   disabled?: boolean;
+  selectedModel?: string;
+  onSelectModel?: (modelId: string) => void;
 }
 
 const AVAILABLE_MODELS = [
@@ -35,10 +35,15 @@ const AVAILABLE_MODELS = [
 ];
 
 /**
- * Utilitário para redimensionar e comprimir imagens no navegador,
- * garantindo payload leve para contornar o limite de 4.5 MB da Vercel.
+ * Utilitário para comprimir e redimensionar imagens antes do envio,
+ * evitando o limite de 4.5 MB da Vercel Serverless Function.
  */
-async function processFile(file: File, maxWidth = 1600, maxHeight = 1600, quality = 0.8): Promise<FileAttachment> {
+async function processFile(
+  file: File, 
+  maxWidth = 1600, 
+  maxHeight = 1600, 
+  quality = 0.8
+): Promise<FileAttachment> {
   return new Promise((resolve, reject) => {
     if (!file.type.startsWith("image/")) {
       const reader = new FileReader();
@@ -47,8 +52,9 @@ async function processFile(file: File, maxWidth = 1600, maxHeight = 1600, qualit
         const base64 = result.split(",")[1];
         resolve({
           name: file.name,
-          mimeType: file.type || "application/octet-stream",
-          data: base64,
+          type: file.type || "application/octet-stream",
+          previewUrl: undefined,
+          base64: base64,
         });
       };
       reader.onerror = reject;
@@ -84,7 +90,7 @@ async function processFile(file: File, maxWidth = 1600, maxHeight = 1600, qualit
 
       const ctx = canvas.getContext("2d");
       if (!ctx) {
-        reject(new Error("Falha ao obter contexto Canvas 2D"));
+        reject(new Error("Falha ao obter contexto 2D do Canvas"));
         return;
       }
 
@@ -95,8 +101,9 @@ async function processFile(file: File, maxWidth = 1600, maxHeight = 1600, qualit
 
       resolve({
         name: file.name,
-        mimeType: "image/jpeg",
-        data: base64,
+        type: "image/jpeg",
+        previewUrl: dataUrl,
+        base64: base64,
       });
     };
 
@@ -106,16 +113,33 @@ async function processFile(file: File, maxWidth = 1600, maxHeight = 1600, qualit
   });
 }
 
-export function ChatBox({ onSendMessage, isLoading, disabled = false }: ChatBoxProps) {
+export function ChatBox({ 
+  onSendMessage, 
+  isLoading, 
+  disabled = false,
+  selectedModel: controlledModel,
+  onSelectModel 
+}: ChatBoxProps) {
   const [input, setInput] = useState("");
   const [attachment, setAttachment] = useState<FileAttachment | null>(null);
   const [isProcessingFile, setIsProcessingFile] = useState(false);
-  const [selectedModel, setSelectedModel] = useState(AVAILABLE_MODELS[0].id);
+  const [internalModel, setInternalModel] = useState(AVAILABLE_MODELS[0].id);
   const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
+
+  const activeModel = controlledModel || internalModel;
+
+  const handleModelSelect = (id: string) => {
+    if (onSelectModel) {
+      onSelectModel(id);
+    } else {
+      setInternalModel(id);
+    }
+    setIsModelDropdownOpen(false);
+  };
 
   useEffect(() => {
     if (textareaRef.current) {
@@ -168,8 +192,7 @@ export function ChatBox({ onSendMessage, isLoading, disabled = false }: ChatBoxP
       textareaRef.current.style.height = "auto";
     }
 
-    // Chama respeitando a ordem exata esperada por page.tsx: (text, modelId, attachments)
-    await onSendMessage(messageText, selectedModel, attachmentsList);
+    await onSendMessage(messageText, activeModel, attachmentsList);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -179,7 +202,7 @@ export function ChatBox({ onSendMessage, isLoading, disabled = false }: ChatBoxP
     }
   };
 
-  const currentModelObj = AVAILABLE_MODELS.find((m) => m.id === selectedModel) || AVAILABLE_MODELS[0];
+  const currentModelObj = AVAILABLE_MODELS.find((m) => m.id === activeModel) || AVAILABLE_MODELS[0];
 
   return (
     <div className="w-full max-w-3xl mx-auto px-4 pb-4">
@@ -187,9 +210,9 @@ export function ChatBox({ onSendMessage, isLoading, disabled = false }: ChatBoxP
         {attachment && (
           <div className="p-3 pb-0 flex items-center gap-2">
             <div className="relative group flex items-center gap-2.5 px-3 py-1.5 rounded-xl bg-white/5 border border-white/10 max-w-xs">
-              {attachment.mimeType.startsWith("image/") ? (
+              {attachment.previewUrl ? (
                 <img
-                  src={`data:${attachment.mimeType};base64,${attachment.data}`}
+                  src={attachment.previewUrl}
                   alt={attachment.name}
                   className="w-9 h-9 rounded-lg object-cover border border-white/10"
                 />
@@ -201,7 +224,7 @@ export function ChatBox({ onSendMessage, isLoading, disabled = false }: ChatBoxP
 
               <div className="flex flex-col min-w-0 pr-4">
                 <span className="text-xs text-zinc-200 truncate font-medium">{attachment.name}</span>
-                <span className="text-[10px] text-zinc-500 uppercase">{attachment.mimeType.split("/")[1]}</span>
+                <span className="text-[10px] text-zinc-500 uppercase">{attachment.type.split("/")[1] || "DOC"}</span>
               </div>
 
               <button
@@ -270,17 +293,14 @@ export function ChatBox({ onSendMessage, isLoading, disabled = false }: ChatBoxP
                     <button
                       key={model.id}
                       type="button"
-                      onClick={() => {
-                        setSelectedModel(model.id);
-                        setIsModelDropdownOpen(false);
-                      }}
+                      onClick={() => handleModelSelect(model.id)}
                       className="w-full flex items-center justify-between p-2 rounded-lg text-left hover:bg-white/5 transition-colors"
                     >
                       <div>
                         <div className="text-xs font-medium text-zinc-200">{model.name}</div>
                         <div className="text-[10px] text-zinc-500">{model.desc}</div>
                       </div>
-                      {selectedModel === model.id && <Check className="w-3.5 h-3.5 text-emerald-400" />}
+                      {activeModel === model.id && <Check className="w-3.5 h-3.5 text-emerald-400" />}
                     </button>
                   ))}
                 </div>
