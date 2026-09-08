@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, Suspense } from "react";
 import ReactMarkdown from "react-markdown";
 import { Header } from "@/components/layout/header";
 import { Sidebar } from "@/components/layout/sidebar";
@@ -10,6 +10,7 @@ import { FeatureView, FeatureTab } from "@/components/features/feature-view";
 import { AuthModal } from "@/components/auth/auth-modal";
 import { StudioModal } from "@/components/studio/studio-modal";
 import { PricingModal } from "@/components/pricing/pricing-modal";
+import { PaymentSuccessModal } from "@/components/ui/payment-success-modal";
 import { 
   Zap, 
   User as UserIcon, 
@@ -22,7 +23,10 @@ import {
   Code2,
   Share2,
   SearchCode,
-  Crown
+  Crown,
+  Layers,
+  Wand2,
+  CheckCircle2
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { User } from "@supabase/supabase-js";
@@ -71,6 +75,7 @@ export default function Home() {
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [isStudioOpen, setIsStudioOpen] = useState(false);
   const [isPricingOpen, setIsPricingOpen] = useState(false);
+  const [isPaymentSuccessOpen, setIsPaymentSuccessOpen] = useState(false);
 
   const [currentTab, setCurrentTab] = useState<FeatureTab>("chat");
   const [currentChatId, setCurrentChatId] = useState<string | null>(null);
@@ -100,6 +105,7 @@ export default function Home() {
     }
   };
 
+  // Escuta status da autenticação e verifica parâmetros de retorno do Mercado Pago (?payment=success)
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
       const currentUser = data.user;
@@ -118,6 +124,18 @@ export default function Home() {
         setUserTier("free");
       }
     });
+
+    // Detecta feedback de pagamento na URL
+    if (typeof window !== "undefined") {
+      const urlParams = new URLSearchParams(window.location.search);
+      if (urlParams.get("payment") === "success") {
+        setIsPaymentSuccessOpen(true);
+        // Atualiza o estado do tier para PRO na interface
+        setUserTier("pro");
+        // Limpa a URL sem dar refresh na página
+        window.history.replaceState({}, document.title, window.location.pathname);
+      }
+    }
 
     return () => {
       authListener.subscription.unsubscribe();
@@ -308,6 +326,7 @@ export default function Home() {
         body: JSON.stringify({
           model: modelId,
           agentId: activeAgentId,
+          userId: user?.id || null,
           messages: newMessages.map((m) => ({
             role: m.role,
             content: m.content,
@@ -321,8 +340,8 @@ export default function Home() {
       });
 
       if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(errorText || "Erro retornado pela API");
+        const errorData = await response.json().catch(() => ({ error: "Erro na API" }));
+        throw new Error(errorData.error || "Erro retornado pela API");
       }
 
       if (!response.body) {
@@ -430,9 +449,20 @@ export default function Home() {
         onSelectPlan={handleCheckoutPlan}
       />
 
+      <PaymentSuccessModal
+        isOpen={isPaymentSuccessOpen}
+        onClose={() => setIsPaymentSuccessOpen(false)}
+      />
+
       <StudioModal
         isOpen={isStudioOpen}
         onClose={() => setIsStudioOpen(false)}
+        userId={user?.id}
+        userTier={userTier}
+        onRequireUpgrade={() => {
+          setIsStudioOpen(false);
+          setIsPricingOpen(true);
+        }}
         onSendToChat={(dataUrl, promptText) => {
           const base64 = dataUrl.split(",")[1];
           const newAttachment: FileAttachment = {
@@ -468,31 +498,70 @@ export default function Home() {
               onSelectActiveAgent={setActiveAgentId}
             />
           ) : messages.length === 0 ? (
-            <div className="flex-1 flex flex-col items-center justify-center px-4 -translate-y-4 w-full max-w-4xl mx-auto">
-              <div className="w-full text-center mb-8">
-                <div className="flex items-center justify-center gap-2 mb-4">
+            <div className="flex-1 flex flex-col items-center justify-center px-4 -translate-y-2 w-full max-w-4xl mx-auto overflow-y-auto">
+              
+              {/* Topo / Banner de Destaque PRO */}
+              <div className="w-full text-center mb-6">
+                <div className="flex items-center justify-center gap-2 mb-3">
                   <button
                     onClick={() => setIsPricingOpen(true)}
-                    className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 text-emerald-400 text-xs transition-colors cursor-pointer group"
+                    className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-gradient-to-r from-emerald-500/15 via-emerald-500/25 to-cyan-500/15 hover:from-emerald-500/25 hover:to-cyan-500/25 border border-emerald-500/30 text-emerald-300 text-xs font-medium transition-all shadow-[0_0_15px_rgba(16,185,129,0.15)] group cursor-pointer"
                   >
-                    <Crown className="w-3.5 h-3.5 group-hover:scale-110 transition-transform" />
-                    <span>Plano {userTier.toUpperCase()} &bull; Upgrade para PRO</span>
+                    <Crown className="w-3.5 h-3.5 text-emerald-400 group-hover:scale-110 transition-transform" />
+                    <span>Plano {userTier.toUpperCase()} &bull; {userTier === "free" ? "Desbloqueie o PRO por R$ 29/mês" : "Benefícios Ativos"}</span>
                   </button>
                 </div>
 
-                <h1 className="text-3xl sm:text-5xl font-normal tracking-tight text-zinc-100 leading-tight">
-                  Peça o que quiser ao SATIX
+                <h1 className="text-3xl sm:text-5xl font-medium tracking-tight text-zinc-100 leading-tight mb-2">
+                  O que você quer criar hoje?
                 </h1>
+                <p className="text-xs sm:text-sm text-zinc-400 max-w-lg mx-auto leading-relaxed">
+                  Chat multimodal inteligente, estúdio de edição visual e geração com os modelos de IA mais avançados do mundo.
+                </p>
               </div>
 
-              <div className="w-full grid grid-cols-1 sm:grid-cols-2 gap-3 mb-8">
+              {/* Pilares de Diferenciais do SATIX PRO (Mini Showcase) */}
+              <div className="w-full grid grid-cols-3 gap-2 sm:gap-3 mb-6">
+                <div className="p-2.5 sm:p-3 rounded-xl bg-white/[0.02] border border-white/5 flex flex-col items-center text-center">
+                  <div className="w-7 h-7 rounded-lg bg-emerald-500/10 text-emerald-400 flex items-center justify-center mb-1.5">
+                    <Zap className="w-3.5 h-3.5" />
+                  </div>
+                  <span className="text-[11px] font-semibold text-zinc-200">Gemini 2.5 Pro</span>
+                  <span className="text-[10px] text-zinc-500 mt-0.5">Raciocínio complexo</span>
+                </div>
+
+                <div 
+                  onClick={() => setIsStudioOpen(true)}
+                  className="p-2.5 sm:p-3 rounded-xl bg-white/[0.02] hover:bg-white/[0.05] border border-white/5 cursor-pointer flex flex-col items-center text-center transition-colors group"
+                >
+                  <div className="w-7 h-7 rounded-lg bg-cyan-500/10 text-cyan-400 flex items-center justify-center mb-1.5 group-hover:scale-105 transition-transform">
+                    <Layers className="w-3.5 h-3.5" />
+                  </div>
+                  <span className="text-[11px] font-semibold text-zinc-200">SATIX Studio</span>
+                  <span className="text-[10px] text-zinc-500 mt-0.5">Recorte & Ajustes IA</span>
+                </div>
+
+                <div 
+                  onClick={() => setIsPricingOpen(true)}
+                  className="p-2.5 sm:p-3 rounded-xl bg-white/[0.02] hover:bg-white/[0.05] border border-white/5 cursor-pointer flex flex-col items-center text-center transition-colors group"
+                >
+                  <div className="w-7 h-7 rounded-lg bg-amber-500/10 text-amber-400 flex items-center justify-center mb-1.5 group-hover:scale-105 transition-transform">
+                    <Wand2 className="w-3.5 h-3.5" />
+                  </div>
+                  <span className="text-[11px] font-semibold text-zinc-200">Imagen 3</span>
+                  <span className="text-[10px] text-zinc-500 mt-0.5">Geração fotorrealista</span>
+                </div>
+              </div>
+
+              {/* Cards de Ações Rápidas */}
+              <div className="w-full grid grid-cols-1 sm:grid-cols-2 gap-2.5 mb-6">
                 {QUICK_ACTIONS.map((action, idx) => {
                   const Icon = action.icon;
                   return (
                     <button
                       key={idx}
                       onClick={() => handleSendMessage(action.prompt, selectedModel)}
-                      className="p-3.5 rounded-xl bg-white/[0.03] hover:bg-white/[0.07] border border-white/5 hover:border-white/10 text-left transition-all group flex items-start gap-3"
+                      className="p-3 rounded-xl bg-white/[0.03] hover:bg-white/[0.07] border border-white/5 hover:border-white/10 text-left transition-all group flex items-start gap-3"
                     >
                       <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 flex-shrink-0 group-hover:scale-105 transition-transform">
                         <Icon className="w-4 h-4" />
@@ -510,12 +579,15 @@ export default function Home() {
                 })}
               </div>
 
+              {/* Chat Input */}
               <div className="w-full flex justify-center">
                 <ChatBox
                   onSendMessage={handleSendMessage}
                   isLoading={isLoading}
                   selectedModel={selectedModel}
                   onSelectModel={setSelectedModel}
+                  userTier={userTier}
+                  onRequireUpgrade={() => setIsPricingOpen(true)}
                 />
               </div>
             </div>
@@ -688,6 +760,8 @@ export default function Home() {
                   isLoading={isLoading}
                   selectedModel={selectedModel}
                   onSelectModel={setSelectedModel}
+                  userTier={userTier}
+                  onRequireUpgrade={() => setIsPricingOpen(true)}
                 />
               </div>
             </div>
