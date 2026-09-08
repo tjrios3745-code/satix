@@ -1,23 +1,31 @@
 import { NextRequest, NextResponse } from "next/server";
 import { MercadoPagoConfig, Preference } from "mercadopago";
 
-const client = new MercadoPagoConfig({
-  accessToken: process.env.MERCADO_PAGO_ACCESS_TOKEN || "",
-});
-
 export async function POST(req: NextRequest) {
   try {
+    const accessToken = process.env.MERCADO_PAGO_ACCESS_TOKEN;
+
+    if (!accessToken) {
+      return NextResponse.json(
+        { error: "MERCADO_PAGO_ACCESS_TOKEN não configurada." },
+        { status: 500 }
+      );
+    }
+
     const { userId, userEmail, tier = "pro" } = await req.json();
 
     if (!userId) {
       return NextResponse.json(
-        { error: "Usuário precisa estar autenticado para assinar." },
+        { error: "Usuário não autenticado." },
         { status: 401 }
       );
     }
 
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://satix-omega.vercel.app";
+    const client = new MercadoPagoConfig({
+      accessToken: accessToken.trim(),
+    });
 
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://satix-omega.vercel.app";
     const isBusiness = tier === "business";
     const title = isBusiness ? "SATIX - Plano Business" : "SATIX - Plano PRO Mensal";
     const price = isBusiness ? 79.0 : 29.0;
@@ -36,11 +44,15 @@ export async function POST(req: NextRequest) {
           },
         ],
         payer: {
-          email: userEmail || undefined,
+          email: userEmail || "cliente@satix.com",
         },
         metadata: {
           user_id: userId,
           tier: tier,
+        },
+        payment_methods: {
+          excluded_payment_types: [], // Não exclui nenhum método (mantém Pix, Cartão, Boleto, Débito)
+          installments: 12,           // Permite parcelamento em até 12x no cartão
         },
         back_urls: {
           success: `${appUrl}/?payment=success`,
@@ -54,9 +66,9 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ init_point: response.init_point });
   } catch (error: any) {
-    console.error("Erro ao criar preferência do Mercado Pago:", error);
+    console.error("Erro na API de Checkout:", error);
     return NextResponse.json(
-      { error: error?.message || "Erro ao iniciar pagamento." },
+      { error: error?.message || "Erro ao gerar checkout." },
       { status: 500 }
     );
   }
