@@ -9,7 +9,19 @@ import { CodeBlock } from "@/components/chat/code-block";
 import { FeatureView, FeatureTab } from "@/components/features/feature-view";
 import { AuthModal } from "@/components/auth/auth-modal";
 import { StudioModal } from "@/components/studio/studio-modal";
-import { Zap, User as UserIcon, Sparkles, Download, FileText, FileCode, Check } from "lucide-react";
+import { 
+  Zap, 
+  User as UserIcon, 
+  Sparkles, 
+  Download, 
+  FileText, 
+  FileCode, 
+  Check,
+  FileEdit,
+  Code2,
+  Share2,
+  SearchCode
+} from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { User } from "@supabase/supabase-js";
 
@@ -23,6 +35,33 @@ interface Message {
     previewUrl?: string;
   }[];
 }
+
+const QUICK_ACTIONS = [
+  {
+    icon: FileEdit,
+    title: "Reescrever & Otimizar",
+    desc: "Melhorar tom, clareza e ortografia de um texto",
+    prompt: "Por favor, atue como um redator profissional. Reescreva e aprimore o seguinte texto tornando-o mais claro, envolvente e profissional:\n\n[Insira seu texto aqui]"
+  },
+  {
+    icon: Share2,
+    title: "Post para Redes Sociais",
+    desc: "Gerar legenda cativante e hashtags para o Instagram",
+    prompt: "Crie um post completo para o Instagram sobre o tema [assunto]. Inclua uma introdução que prenda a atenção, 3 pontos de valor, chamada para ação (CTA) e 8 hashtags relevantes."
+  },
+  {
+    icon: Code2,
+    title: "Programação & Código",
+    desc: "Construir, explicar ou corrigir bugs em código",
+    prompt: "Atue como um desenvolvedor Fullstack sênior. Me ajude a resolver o seguinte problema / construir a seguinte funcionalidade em Next.js/React:\n\n[Descreva aqui]"
+  },
+  {
+    icon: SearchCode,
+    title: "Análise de Documento / OCR",
+    desc: "Resumir tópicos e extrair pontos-chave",
+    prompt: "Analise o conteúdo do arquivo/texto anexo e extraia: 1) Resumo executivo em 3 frases, 2) Pontos mais importantes em tópicos, 3) Pendências ou pontos de atenção."
+  }
+];
 
 export default function Home() {
   const [user, setUser] = useState<User | null>(null);
@@ -41,7 +80,6 @@ export default function Home() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const exportMenuRef = useRef<HTMLDivElement>(null);
 
-  // Monitora a sessão de autenticação
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
       setUser(data.user);
@@ -360,12 +398,43 @@ export default function Home() {
               onSelectActiveAgent={setActiveAgentId}
             />
           ) : messages.length === 0 ? (
-            <div className="flex-1 flex flex-col items-center justify-center px-8 -translate-y-8 w-full">
-              <div className="w-full text-center mb-10">
-                <h1 className="text-4xl sm:text-5xl lg:text-[52px] font-normal tracking-tight text-zinc-100 leading-tight">
+            <div className="flex-1 flex flex-col items-center justify-center px-4 -translate-y-4 w-full max-w-4xl mx-auto">
+              <div className="w-full text-center mb-8">
+                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs mb-4">
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>Pronto para acelerar seu trabalho</span>
+                </div>
+                <h1 className="text-3xl sm:text-5xl font-normal tracking-tight text-zinc-100 leading-tight">
                   Peça o que quiser ao SATIX
                 </h1>
               </div>
+
+              {/* Cards de Ações Rápidas */}
+              <div className="w-full grid grid-cols-1 sm:grid-cols-2 gap-3 mb-8">
+                {QUICK_ACTIONS.map((action, idx) => {
+                  const Icon = action.icon;
+                  return (
+                    <button
+                      key={idx}
+                      onClick={() => handleSendMessage(action.prompt, selectedModel)}
+                      className="p-3.5 rounded-xl bg-white/[0.03] hover:bg-white/[0.07] border border-white/5 hover:border-white/10 text-left transition-all group flex items-start gap-3"
+                    >
+                      <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 flex-shrink-0 group-hover:scale-105 transition-transform">
+                        <Icon className="w-4 h-4" />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="text-xs font-semibold text-zinc-200 group-hover:text-white transition-colors">
+                          {action.title}
+                        </div>
+                        <div className="text-[11px] text-zinc-400 leading-snug mt-0.5 truncate">
+                          {action.desc}
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+
               <div className="w-full flex justify-center">
                 <ChatBox
                   onSendMessage={handleSendMessage}

@@ -15,7 +15,8 @@ import {
   Eye, 
   Scissors,
   Loader2,
-  Send
+  Send,
+  Palette
 } from "lucide-react";
 
 interface StudioModalProps {
@@ -42,12 +43,25 @@ const DEFAULT_FILTERS: FilterSettings = {
   blur: 0,
 };
 
+// Presets de cores e gradientes de estúdio profissional
+const BACKGROUND_PRESETS = [
+  { id: "transparent", name: "Transparente", style: "transparent", color: "transparent" },
+  { id: "white", name: "Estúdio Branco", style: "#ffffff", color: "#ffffff" },
+  { id: "dark", name: "Estúdio Dark", style: "#090d16", color: "#090d16" },
+  { id: "warm-gray", name: "Cinza Neutro", style: "#e5e7eb", color: "#e5e7eb" },
+  { id: "gradient-sunset", name: "Sunset Gold", style: "linear-gradient(135deg, #f59e0b, #ef4444)", type: "gradient", stops: ["#f59e0b", "#ef4444"] },
+  { id: "gradient-emerald", name: "Satix Mint", style: "linear-gradient(135deg, #10b981, #064e3b)", type: "gradient", stops: ["#10b981", "#064e3b"] },
+  { id: "gradient-cyber", name: "Cyber Neon", style: "linear-gradient(135deg, #06b6d4, #3b82f6, #9333ea)", type: "gradient", stops: ["#06b6d4", "#3b82f6", "#9333ea"] },
+  { id: "gradient-studio", name: "Luz de Foco", style: "radial-gradient(circle, #334155 0%, #0f172a 100%)", type: "radial", stops: ["#334155", "#0f172a"] },
+];
+
 export function StudioModal({ isOpen, onClose, onSendToChat }: StudioModalProps) {
   const [imageSrc, setImageSrc] = useState<string | null>(null);
   const [filters, setFilters] = useState<FilterSettings>(DEFAULT_FILTERS);
   const [rotation, setRotation] = useState<number>(0);
   const [isComparing, setIsComparing] = useState<boolean>(false);
   const [isRemovingBg, setIsRemovingBg] = useState<boolean>(false);
+  const [selectedBg, setSelectedBg] = useState<string>("transparent");
   const [promptPrompt, setPromptPrompt] = useState<string>("");
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -64,6 +78,7 @@ export function StudioModal({ isOpen, onClose, onSendToChat }: StudioModalProps)
       setImageSrc(src);
       setFilters(DEFAULT_FILTERS);
       setRotation(0);
+      setSelectedBg("transparent");
 
       const img = new Image();
       img.onload = () => {
@@ -89,6 +104,37 @@ export function StudioModal({ isOpen, onClose, onSendToChat }: StudioModalProps)
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
+    // 1. Desenha o fundo selecionado (se não for transparente e não estiver em modo comparação)
+    if (!isComparing && selectedBg !== "transparent") {
+      const preset = BACKGROUND_PRESETS.find((b) => b.id === selectedBg);
+      if (preset) {
+        ctx.save();
+        if (preset.type === "gradient") {
+          const grad = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
+          const step = 1 / (preset.stops.length - 1);
+          preset.stops.forEach((c, idx) => grad.addColorStop(idx * step, c));
+          ctx.fillStyle = grad;
+        } else if (preset.type === "radial") {
+          const radius = Math.max(canvas.width, canvas.height) / 1.5;
+          const radGrad = ctx.createRadialGradient(
+            canvas.width / 2,
+            canvas.height / 2,
+            10,
+            canvas.width / 2,
+            canvas.height / 2,
+            radius
+          );
+          preset.stops.forEach((c, idx) => radGrad.addColorStop(idx, c));
+          ctx.fillStyle = radGrad;
+        } else {
+          ctx.fillStyle = preset.color || "#ffffff";
+        }
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.restore();
+      }
+    }
+
+    // 2. Desenha a foto com rotação e filtros
     ctx.save();
     ctx.translate(canvas.width / 2, canvas.height / 2);
     ctx.rotate((rotation * Math.PI) / 180);
@@ -107,9 +153,9 @@ export function StudioModal({ isOpen, onClose, onSendToChat }: StudioModalProps)
     if (imageSrc && originalImageRef.current) {
       renderCanvas();
     }
-  }, [filters, rotation, isComparing, imageSrc]);
+  }, [filters, rotation, isComparing, selectedBg, imageSrc]);
 
-  // Remoção de fundo 1-clique via WebAssembly IA no cliente
+  // Remoção de fundo 1-clique via IA WebAssembly no cliente
   const handleRemoveBackground = async () => {
     if (!imageSrc || isRemovingBg) return;
 
@@ -128,14 +174,13 @@ export function StudioModal({ isOpen, onClose, onSendToChat }: StudioModalProps)
       };
       newImg.src = newUrl;
     } catch (error) {
-      console.error("Falha ao remover fundo com IA:", error);
+      console.error("Falha ao remover fundo:", error);
       alert("Não foi possível recortar o fundo desta imagem.");
     } finally {
       setIsRemovingBg(false);
     }
   };
 
-  // Download do arquivo mantendo resolução total
   const handleDownload = () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -146,7 +191,6 @@ export function StudioModal({ isOpen, onClose, onSendToChat }: StudioModalProps)
     link.click();
   };
 
-  // Envio otimizado para a API do Chat para evitar o erro 413 da Vercel
   const handleSendResultToChat = () => {
     const canvas = canvasRef.current;
     if (!canvas || !onSendToChat) return;
@@ -174,7 +218,6 @@ export function StudioModal({ isOpen, onClose, onSendToChat }: StudioModalProps)
 
     if (tempCtx) {
       tempCtx.drawImage(canvas, 0, 0, targetWidth, targetHeight);
-      // Exporta em PNG comprimido leve preservando transparência
       const optimizedDataUrl = tempCanvas.toDataURL("image/png");
       onSendToChat(optimizedDataUrl, promptPrompt.trim() || undefined);
     } else {
@@ -187,6 +230,7 @@ export function StudioModal({ isOpen, onClose, onSendToChat }: StudioModalProps)
   const handleReset = () => {
     setFilters(DEFAULT_FILTERS);
     setRotation(0);
+    setSelectedBg("transparent");
   };
 
   if (!isOpen) return null;
@@ -195,7 +239,7 @@ export function StudioModal({ isOpen, onClose, onSendToChat }: StudioModalProps)
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4 animate-in fade-in duration-200">
       <div className="relative w-full max-w-5xl h-[90vh] bg-[#090d16] border border-white/10 rounded-2xl flex flex-col overflow-hidden shadow-2xl">
         
-        {/* Top Header */}
+        {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-white/10 bg-[#0d121f]">
           <div className="flex items-center gap-3">
             <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
@@ -205,10 +249,10 @@ export function StudioModal({ isOpen, onClose, onSendToChat }: StudioModalProps)
               <h2 className="text-base font-semibold text-zinc-100 flex items-center gap-2">
                 SATIX Studio
                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-normal">
-                  IA & Canvas
+                  IA & Estúdio Visual
                 </span>
               </h2>
-              <p className="text-xs text-zinc-400">Edição e recorte neural integrado</p>
+              <p className="text-xs text-zinc-400">Recorte neural, ambientação de fundo e ajustes</p>
             </div>
           </div>
 
@@ -241,17 +285,17 @@ export function StudioModal({ isOpen, onClose, onSendToChat }: StudioModalProps)
           </div>
         </div>
 
-        {/* Viewport Principal */}
+        {/* Viewport */}
         <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
           
-          {/* Lado Esquerdo: Canvas com Fundo Quadriculado Transparente */}
+          {/* Lado Esquerdo: Canvas */}
           <div className="flex-1 bg-[#05070c] relative flex items-center justify-center p-6 overflow-auto">
             {imageSrc ? (
               <div className="relative max-w-full max-h-full flex items-center justify-center">
                 <div 
                   className="relative rounded-lg overflow-hidden border border-white/10 shadow-2xl"
                   style={{
-                    backgroundImage: "linear-gradient(45deg, #111524 25%, transparent 25%), linear-gradient(-45deg, #111524 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #111524 75%), linear-gradient(-45deg, transparent 75%, #111524 75%)",
+                    backgroundImage: selectedBg === "transparent" ? "linear-gradient(45deg, #111524 25%, transparent 25%), linear-gradient(-45deg, #111524 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #111524 75%), linear-gradient(-45deg, transparent 75%, #111524 75%)" : "none",
                     backgroundSize: "16px 16px",
                     backgroundPosition: "0 0, 0 8px, 8px -8px, -8px 0px"
                   }}
@@ -286,7 +330,7 @@ export function StudioModal({ isOpen, onClose, onSendToChat }: StudioModalProps)
                   <Upload className="w-7 h-7" />
                 </div>
                 <h3 className="text-sm font-medium text-zinc-200 mb-1">Selecione uma imagem</h3>
-                <p className="text-xs text-zinc-500 mb-5">Suporta JPEG, PNG e WEBP em alta resolução</p>
+                <p className="text-xs text-zinc-500 mb-5">Suporta fotos de pessoas, produtos ou animais</p>
                 <button
                   onClick={() => fileInputRef.current?.click()}
                   className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-zinc-950 text-xs font-medium transition-all shadow-md"
@@ -305,10 +349,10 @@ export function StudioModal({ isOpen, onClose, onSendToChat }: StudioModalProps)
             />
           </div>
 
-          {/* Lado Direito: Painel de Controles */}
+          {/* Lado Direito: Controles */}
           <div className="w-full lg:w-84 bg-[#0a0f1d] border-t lg:border-t-0 lg:border-l border-white/10 p-5 flex flex-col gap-5 overflow-y-auto">
             
-            {/* Bloco de IA: Remoção de Fundo */}
+            {/* Ações de IA: Remoção de Fundo */}
             <div>
               <span className="text-xs font-semibold text-emerald-400 uppercase tracking-wider block mb-2.5 flex items-center gap-1.5">
                 <Scissors className="w-3.5 h-3.5" /> Ações Rápidas de IA
@@ -325,6 +369,33 @@ export function StudioModal({ isOpen, onClose, onSendToChat }: StudioModalProps)
                 )}
                 <span>Remover Fundo (1 Clique)</span>
               </button>
+            </div>
+
+            {/* Novo Fundo de Estúdio */}
+            <div>
+              <span className="text-xs font-semibold text-zinc-300 uppercase tracking-wider block mb-2.5 flex items-center gap-1.5">
+                <Palette className="w-3.5 h-3.5 text-zinc-400" /> Cenário & Fundo
+              </span>
+              <div className="grid grid-cols-4 gap-2">
+                {BACKGROUND_PRESETS.map((preset) => (
+                  <button
+                    key={preset.id}
+                    onClick={() => setSelectedBg(preset.id)}
+                    disabled={!imageSrc}
+                    title={preset.name}
+                    className={`h-9 rounded-lg border flex items-center justify-center relative transition-all disabled:opacity-40 ${
+                      selectedBg === preset.id
+                        ? "border-emerald-400 scale-105 shadow-[0_0_8px_rgba(16,185,129,0.4)]"
+                        : "border-white/10 hover:border-white/30"
+                    }`}
+                    style={{ background: preset.style }}
+                  >
+                    {preset.id === "transparent" && (
+                      <span className="text-[10px] text-zinc-400 font-medium select-none">Transp.</span>
+                    )}
+                  </button>
+                ))}
+              </div>
             </div>
 
             {/* Orientação */}
@@ -442,7 +513,7 @@ export function StudioModal({ isOpen, onClose, onSendToChat }: StudioModalProps)
               </div>
             </div>
 
-            {/* Enviar Imagem Editada para o Chat SATIX */}
+            {/* Levar para o Chat */}
             {imageSrc && onSendToChat && (
               <div className="pt-3 border-t border-white/5 space-y-2">
                 <span className="text-xs font-semibold text-zinc-300 uppercase tracking-wider block">
