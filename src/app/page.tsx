@@ -84,7 +84,6 @@ export default function Home() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const exportMenuRef = useRef<HTMLDivElement>(null);
 
-  // Busca os dados do usuário e perfil com tier
   const fetchUserProfile = async (userId: string) => {
     try {
       const { data, error } = await supabase
@@ -382,8 +381,10 @@ export default function Home() {
 
       <Header
         user={user}
+        userTier={userTier}
         onOpenAuth={() => setAuthModalOpen(true)}
         onSignOut={handleSignOut}
+        onOpenPricing={() => setIsPricingOpen(true)}
       />
 
       <AuthModal
@@ -397,7 +398,7 @@ export default function Home() {
         onClose={() => setIsPricingOpen(false)}
         currentTier={userTier}
         onSelectPlan={(tier) => {
-          alert(`Plano selecionado: ${tier.toUpperCase()}. Integração de pagamento pronta para ser ativada.`);
+          alert(`Plano selecionado: ${tier.toUpperCase()}. Sistema de pagamento em configuração.`);
         }}
       />
 
@@ -441,7 +442,6 @@ export default function Home() {
           ) : messages.length === 0 ? (
             <div className="flex-1 flex flex-col items-center justify-center px-4 -translate-y-4 w-full max-w-4xl mx-auto">
               <div className="w-full text-center mb-8">
-                {/* Badge de Upgrade para o Pro */}
                 <div className="flex items-center justify-center gap-2 mb-4">
                   <button
                     onClick={() => setIsPricingOpen(true)}
