@@ -12,14 +12,18 @@ import {
   Loader2 
 } from "lucide-react";
 
-export interface AttachmentData {
+// Tipagem compatível com src/app/page.tsx
+export interface FileAttachment {
   name: string;
   mimeType: string;
   data: string; // base64 sem prefixo
 }
 
+// Alias para manter compatibilidade reversa caso algum outro arquivo use AttachmentData
+export type AttachmentData = FileAttachment;
+
 interface ChatBoxProps {
-  onSendMessage: (content: string, attachment?: AttachmentData, model?: string) => Promise<void>;
+  onSendMessage: (text: string, modelId: string, attachments?: FileAttachment[]) => Promise<void> | void;
   isLoading: boolean;
   disabled?: boolean;
 }
@@ -31,12 +35,11 @@ const AVAILABLE_MODELS = [
 ];
 
 /**
- * Utilitário embutido para redimensionar/comprimir imagens no browser,
- * mantendo o payload abaixo do teto de 4.5 MB da Vercel Serverless.
+ * Utilitário para redimensionar e comprimir imagens no navegador,
+ * garantindo payload leve para contornar o limite de 4.5 MB da Vercel.
  */
-async function processFile(file: File, maxWidth = 1600, maxHeight = 1600, quality = 0.8): Promise<AttachmentData> {
+async function processFile(file: File, maxWidth = 1600, maxHeight = 1600, quality = 0.8): Promise<FileAttachment> {
   return new Promise((resolve, reject) => {
-    // Arquivos não visuais (PDF, TXT, etc.) são lidos diretamente
     if (!file.type.startsWith("image/")) {
       const reader = new FileReader();
       reader.onload = () => {
@@ -53,7 +56,6 @@ async function processFile(file: File, maxWidth = 1600, maxHeight = 1600, qualit
       return;
     }
 
-    // Processamento e compressão via Canvas para imagens
     const img = new Image();
     const reader = new FileReader();
 
@@ -88,7 +90,6 @@ async function processFile(file: File, maxWidth = 1600, maxHeight = 1600, qualit
 
       ctx.drawImage(img, 0, 0, width, height);
 
-      // Converte para JPEG otimizado
       const dataUrl = canvas.toDataURL("image/jpeg", quality);
       const base64 = dataUrl.split(",")[1];
 
@@ -107,7 +108,7 @@ async function processFile(file: File, maxWidth = 1600, maxHeight = 1600, qualit
 
 export function ChatBox({ onSendMessage, isLoading, disabled = false }: ChatBoxProps) {
   const [input, setInput] = useState("");
-  const [attachment, setAttachment] = useState<AttachmentData | null>(null);
+  const [attachment, setAttachment] = useState<FileAttachment | null>(null);
   const [isProcessingFile, setIsProcessingFile] = useState(false);
   const [selectedModel, setSelectedModel] = useState(AVAILABLE_MODELS[0].id);
   const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
@@ -116,7 +117,6 @@ export function ChatBox({ onSendMessage, isLoading, disabled = false }: ChatBoxP
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  // Auto-resize do textarea conforme o texto cresce
   useEffect(() => {
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
@@ -124,7 +124,6 @@ export function ChatBox({ onSendMessage, isLoading, disabled = false }: ChatBoxP
     }
   }, [input]);
 
-  // Fechar dropdown de modelos ao clicar fora
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
@@ -144,7 +143,7 @@ export function ChatBox({ onSendMessage, isLoading, disabled = false }: ChatBoxP
       const processed = await processFile(file);
       setAttachment(processed);
     } catch (err) {
-      console.error("Erro ao comprimir e anexar arquivo:", err);
+      console.error("Erro ao processar anexo:", err);
     } finally {
       setIsProcessingFile(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
@@ -160,7 +159,7 @@ export function ChatBox({ onSendMessage, isLoading, disabled = false }: ChatBoxP
     if ((!input.trim() && !attachment) || isLoading || isProcessingFile || disabled) return;
 
     const messageText = input.trim();
-    const currentAttachment = attachment || undefined;
+    const attachmentsList = attachment ? [attachment] : undefined;
 
     setInput("");
     setAttachment(null);
@@ -169,7 +168,8 @@ export function ChatBox({ onSendMessage, isLoading, disabled = false }: ChatBoxP
       textareaRef.current.style.height = "auto";
     }
 
-    await onSendMessage(messageText, currentAttachment, selectedModel);
+    // Chama respeitando a ordem exata esperada por page.tsx: (text, modelId, attachments)
+    await onSendMessage(messageText, selectedModel, attachmentsList);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -184,7 +184,6 @@ export function ChatBox({ onSendMessage, isLoading, disabled = false }: ChatBoxP
   return (
     <div className="w-full max-w-3xl mx-auto px-4 pb-4">
       <div className="relative rounded-2xl bg-[#0d121f]/90 border border-white/10 backdrop-blur-md shadow-2xl transition-all focus-within:border-emerald-500/40">
-        {/* Preview de anexo carregado */}
         {attachment && (
           <div className="p-3 pb-0 flex items-center gap-2">
             <div className="relative group flex items-center gap-2.5 px-3 py-1.5 rounded-xl bg-white/5 border border-white/10 max-w-xs">
@@ -216,7 +215,6 @@ export function ChatBox({ onSendMessage, isLoading, disabled = false }: ChatBoxP
           </div>
         )}
 
-        {/* Campo de Entrada de Texto */}
         <div className="p-3">
           <textarea
             ref={textareaRef}
@@ -230,10 +228,8 @@ export function ChatBox({ onSendMessage, isLoading, disabled = false }: ChatBoxP
           />
         </div>
 
-        {/* Rodapé: Controles, Model Selector e Botão de Envio */}
         <div className="flex items-center justify-between px-3 pb-2.5 pt-1 border-t border-white/5">
           <div className="flex items-center gap-2">
-            {/* Input oculto de arquivo */}
             <input
               ref={fileInputRef}
               type="file"
@@ -256,7 +252,6 @@ export function ChatBox({ onSendMessage, isLoading, disabled = false }: ChatBoxP
               )}
             </button>
 
-            {/* Menu de seleção de modelos */}
             <div className="relative" ref={dropdownRef}>
               <button
                 type="button"
@@ -293,7 +288,6 @@ export function ChatBox({ onSendMessage, isLoading, disabled = false }: ChatBoxP
             </div>
           </div>
 
-          {/* Botão de envio */}
           <button
             type="button"
             onClick={() => handleSubmit()}
