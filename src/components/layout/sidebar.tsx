@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
+import Image from "next/image";
 import {
   Search,
   MessageSquare,
@@ -113,6 +114,18 @@ export function Sidebar({
 
   return (
     <aside className="w-64 bg-[#07090e] border-r border-white/5 flex flex-col h-full select-none z-10">
+      {/* Topo com a Logo e Nome do SATIX */}
+      <div className="p-4 flex items-center gap-3 border-b border-white/5">
+        <Image 
+          src="/logo.png" 
+          alt="SATIX Logo" 
+          width={30} 
+          height={30} 
+          className="rounded-lg object-contain"
+        />
+        <span className="text-sm font-bold tracking-wider text-white">SATIX</span>
+      </div>
+
       {/* Botão Nova Conversa */}
       <div className="p-3">
         <button
